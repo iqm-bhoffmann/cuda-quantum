@@ -24,9 +24,6 @@ protected:
   /// @brief The base URL
   std::string iqmServerUrl = "http://localhost/cocos/";
 
-  /// @brief IQM QPU architecture, provided during the compile-time
-  std::string qpuArchitecture = "Adonis";
-
   /// @brief The default cortex-cli tokens file path
   std::optional<std::string> tokensFilePath = std::nullopt;
 
@@ -35,6 +32,12 @@ protected:
 
   /// @brief Return the headers required for the REST calls
   RestHeaders generateRequestHeader() const;
+
+  /// @brief Lookup table for translating the qubit names to index numbers
+  std::map<std::string, uint> qubitNameMap;
+
+  /// @brief Adjacency map for each qubit
+  std::vector<std::set<uint>> qubitAdjacencyMap;
 
   /// @brief Parse cortex-cli tokens JSON for the API access token
   std::optional<std::string> readApiToken() const {
@@ -56,21 +59,11 @@ protected:
     return tokens["access_token"].get<std::string>();
   }
 
-  /// @brief Get server quantum architecture name
-  std::string getQuantumArchitectureName() const {
-    RestClient client;
-    auto headers = generateRequestHeader();
-    auto quantumArchitecture =
-        client.get(iqmServerUrl, "quantum-architecture", headers);
-    try {
-      cudaq::debug("quantumArchitecture = {}", quantumArchitecture.dump());
-      return quantumArchitecture["quantum_architecture"]["name"]
-          .get<std::string>();
-    } catch (const std::exception &e) {
-      throw std::runtime_error("Unable to get quantum architecture name: " +
-                               std::string(e.what()));
-    }
-  }
+  /// @brief Fetch the quantum architecture from server
+  void fetchQuantumArchitecture();
+
+  /// @brief Write the dynamic quantum architecture file
+  void writeQuantumArchitectureFile(std::string filename);
 
 public:
   /// @brief Return the name of this server helper, must be the
@@ -86,14 +79,6 @@ public:
     if (iter != backendConfig.end()) {
       emulate = iter->second == "true";
     }
-
-    // Set QPU architecture
-    iter = backendConfig.find("qpu-architecture");
-    if (iter == backendConfig.end()) {
-      throw std::runtime_error("QPU architecture is not provided");
-    }
-    qpuArchitecture = iter->second;
-    cudaq::debug("qpuArchitecture = {}", qpuArchitecture);
 
     // Set an alternate base URL if provided.
     iter = backendConfig.find("url");
@@ -132,17 +117,8 @@ public:
     }
     cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
 
-    // Fetch quantum-architecture program was compiled with
-    auto configuredTargetArchitecture = getQuantumArchitectureName();
-    cudaq::debug("configuredTargetArchitecture = {}",
-                 configuredTargetArchitecture);
-
-    // Does it match the compiled architecture?
-    if (qpuArchitecture != configuredTargetArchitecture) {
-      throw std::runtime_error(
-          "IQM QPU architecture mismatch: " + qpuArchitecture +
-          " != " + configuredTargetArchitecture);
-    }
+    // Fetch the quantum-architecture of the configured IQM server
+    fetchQuantumArchitecture();
   }
 
   /// @brief Create a job payload for the provided quantum codes
@@ -280,25 +256,184 @@ IQMServerHelper::generateRequestHeader() const {
 
 void IQMServerHelper::updatePassPipeline(
     const std::filesystem::path &platformPath, std::string &passPipeline) {
-  // Note: the leading and trailing single quotes are needed in case there are
-  // spaces in the filename.
   std::string pathToFile;
   auto iter = backendConfig.find("mapping_file");
   if (iter != backendConfig.end()) {
     // Use provided path to file
-    pathToFile = std::string("'") + iter->second + std::string("'");
+    pathToFile = iter->second;
   } else {
     // Construct path to file
     pathToFile =
-        std::string("'") +
         std::string(platformPath / std::string("mapping/iqm") /
-                    (backendConfig["qpu-architecture"] + std::string(".txt'")));
+                    (std::string("qpu-architecture.txt")));
+    cudaq::debug("quantum architecture file: {}", pathToFile);
+
+    writeQuantumArchitectureFile(pathToFile);
   }
+
+  // Add leading and trailing single quotes in case there are spaces in the
+  // filename.
+  pathToFile.insert(0, "'");
+  pathToFile.append("'");
+
   passPipeline =
       std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
 }
 
 RestHeaders IQMServerHelper::getHeaders() { return generateRequestHeader(); }
+
+/**
+ * Fetch the quantum architecture from the configured URL and create a qubit
+ * adjacency map. The map contains only qubits which can be measured and can
+ * be used in prx-gates as well as cz-gates. As qubits pairs for cz-gates
+ * connect only a few qubits the information about neighbors is stored as sets
+ * within a vector of all qubits to save memory.
+ */
+void IQMServerHelper::fetchQuantumArchitecture() {
+  try {
+    RestClient client;
+    auto headers = generateRequestHeader();
+
+    // From the Static Quantum Architecture we need the total number of qubits
+    // and the list of qubit designations.
+    auto staticQuantumArchitecture =
+      client.get(iqmServerUrl, "api/v1/quantum-architecture", headers);
+    cudaq::debug("Static QA={}", staticQuantumArchitecture.dump());
+
+    // The number of qubits of this quantum architecture.
+    uint qubitCount = staticQuantumArchitecture["qubits"].size();
+
+    // Enumerate the qubit designations.
+    uint idx = 0;
+    for (auto qubit : staticQuantumArchitecture["qubits"]) {
+      qubitNameMap[qubit] = idx++;
+    }
+
+    // From the Dynamic Quantum Architecture we need the list of qubit pairs
+    // which can form cz-gates and additionally the lists of single qubits
+    // which can do prx-gates and support measurement.
+    auto latestCalibration =
+      client.get(iqmServerUrl, "api/v1/calibration/latest", headers);
+    cudaq::debug("Calibration ID={}",
+                  latestCalibration["calibration_set_id"].dump());
+
+    // TODO: Do we need to check if the calibration set is valid ???
+
+    auto dynamicQuantumArchitecture =
+      client.get(iqmServerUrl, "api/v1/calibration/" +
+                  std::string(latestCalibration["calibration_set_id"]) +
+                  "/gates", headers);
+    cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
+
+    cudaq::info("Server {} has {} qubits", iqmServerUrl, qubitCount);
+
+    // Initialise the adjacency map with an empty set for each qubit
+    std::set<uint> noConnections;
+    qubitAdjacencyMap.reserve(qubitCount);
+    for (uint i = 0; i < qubitCount; i++) {
+      qubitAdjacencyMap.emplace_back(noConnections);
+    }
+
+    auto &cz_loci = dynamicQuantumArchitecture["gates"]["cz"]
+                        ["implementations"]["crf_crf"]["loci"];
+    auto &prx_loci = dynamicQuantumArchitecture["gates"]["prx"]
+                        ["implementations"]["drag_crf"]["loci"];
+    auto &measure_loci = dynamicQuantumArchitecture["gates"]["measure"]
+                            ["implementations"]["constant"]["loci"];
+
+    cudaq::debug("cz_loci={}", cz_loci.dump());
+    cudaq::debug("prx_loci={}", prx_loci.dump());
+    cudaq::debug("measure_loci={}", measure_loci.dump());
+
+    // Iterate over all cz loci and add only those to the output list for which
+    // all qubits have both measure and prx capability.
+    for (auto cz : cz_loci) {
+      bool lociUsable = true; // assume usable until proven otherwise
+      bool found = false;
+
+      // each cz loci connects 2 qubits - check each of these individually
+      for (auto qubit : cz) {   // cz is an array of strings
+
+        // Check whether this qubit has prx capability.
+        found = false;
+        for (auto it = prx_loci.begin(); it != prx_loci.end() ; it++) {
+          if ((*it)[0] == qubit) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          lociUsable = false;
+          break;
+        }
+
+        // Check whether this qubit has measurement capability.
+        found = false;
+        for (auto it = measure_loci.begin(); it != measure_loci.end() ; it++) {
+          if ((*it)[0] == qubit) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          lociUsable = false;
+          break;
+        }
+      }
+
+      if (lociUsable) {
+        // This cz_loci has passed all the tests so add it to the list.
+        cudaq::debug("usable cz_loci {}", cz.dump());
+        qubitAdjacencyMap[qubitNameMap[cz[0]]].insert(qubitNameMap[cz[1]]);
+        qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
+      }
+    } // for all cz loci
+  }
+  catch (const std::exception &e) {
+    throw std::runtime_error("Unable to get quantum architecture from \"" +
+                            iqmServerUrl + "\": " + std::string(e.what()));
+  }
+} // IQMServerHelper::fetchQuantumArchitecture()
+
+/**
+ * Write the dynamic quantum architecture to the specified filename. If the
+ * file cannot be opened for writing an exception is thrown.
+ * @param filename String with path+filename to write to.
+ * @throws std::runtime_error Thrown when file cannot be opened for writing.
+ */
+void IQMServerHelper::writeQuantumArchitectureFile(std::string filename) {
+  uint qubitCount = qubitAdjacencyMap.size();
+
+  FILE* file = fopen(filename.c_str(), "w");
+  if (!file) {
+    throw std::runtime_error("cannot write QPU architecture file" + filename);
+  }
+
+  // Header information
+  fprintf(file, "NOTE: automatically generated by " __FILE__ "\n"
+                "      for server at URL: %s\n\n", iqmServerUrl.c_str());
+  fprintf(file, "Number of nodes: %u\n", qubitCount);
+  fprintf(file, "Number of edges: ?\n\n");
+
+  // Write one line for each qubit listing the adjacent qubits.
+  for (uint i = 0; i < qubitCount; i++) {
+    bool first = true;
+
+    std::string outputLine = std::to_string(i) + " --> {";
+    for (uint node : qubitAdjacencyMap[i]) {
+      if (first)
+        first=false;
+      else
+        outputLine += ", ";
+      outputLine += std::to_string(node);
+    }
+    outputLine += "}\n";
+
+    fwrite(outputLine.c_str(), outputLine.length(), 1, file);
+  }
+
+  fclose(file);
+} // IQMServerHelper::writeQuantumArchitectureFile()
 
 } // namespace cudaq
 
