@@ -312,17 +312,8 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     // From the Dynamic Quantum Architecture we need the list of qubit pairs
     // which can form cz-gates and additionally the lists of single qubits
     // which can do prx-gates and support measurement.
-    auto latestCalibration =
-      client.get(iqmServerUrl, "api/v1/calibration/latest", headers);
-    cudaq::debug("Calibration ID={}",
-                  latestCalibration["calibration_set_id"].dump());
-
-    // TODO: Do we need to check if the calibration set is valid ???
-
     auto dynamicQuantumArchitecture =
-      client.get(iqmServerUrl, "api/v1/calibration/" +
-                  std::string(latestCalibration["calibration_set_id"]) +
-                  "/gates", headers);
+      client.get(iqmServerUrl, "api/v1/calibration/default/gates", headers);
     cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
     cudaq::info("Server {} has {} qubits", iqmServerUrl, qubitCount);
