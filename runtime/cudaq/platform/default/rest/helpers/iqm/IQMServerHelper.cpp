@@ -27,9 +27,6 @@ protected:
   /// @brief The default cortex-cli tokens file path
   std::optional<std::string> tokensFilePath = std::nullopt;
 
-  /// @brief Program target QPU architecture
-  std::string targetArchitecture = "";
-
   /// @brief Return the headers required for the REST calls
   RestHeaders generateRequestHeader() const;
 
@@ -259,7 +256,7 @@ void IQMServerHelper::updatePassPipeline(
   std::string pathToFile;
   auto iter = backendConfig.find("mapping_file");
   if (iter != backendConfig.end()) {
-    // Use provided path to file
+    // Use provided string as path+filename
     pathToFile = iter->second;
   } else {
     // Construct path to file
@@ -273,8 +270,7 @@ void IQMServerHelper::updatePassPipeline(
 
   // Add leading and trailing single quotes in case there are spaces in the
   // filename.
-  pathToFile.insert(0, "'");
-  pathToFile.append("'");
+  pathToFile.insert(0, "'").append("'");
 
   passPipeline =
       std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
@@ -325,16 +321,20 @@ void IQMServerHelper::fetchQuantumArchitecture() {
       qubitAdjacencyMap.emplace_back(noConnections);
     }
 
-    auto &cz_loci = dynamicQuantumArchitecture["gates"]["cz"]
-                        ["implementations"]["crf_crf"]["loci"];
-    auto &prx_loci = dynamicQuantumArchitecture["gates"]["prx"]
-                        ["implementations"]["drag_crf"]["loci"];
-    auto &measure_loci = dynamicQuantumArchitecture["gates"]["measure"]
-                            ["implementations"]["constant"]["loci"];
+    auto &cz = dynamicQuantumArchitecture["gates"]["cz"];
+    auto implementation = cz["default_implementation"];
+    auto &cz_loci = cz["implementations"][implementation]["loci"];
+    cudaq::debug("cz-gates ({}) loci={}", implementation, cz_loci.dump());
 
-    cudaq::debug("cz_loci={}", cz_loci.dump());
-    cudaq::debug("prx_loci={}", prx_loci.dump());
-    cudaq::debug("measure_loci={}", measure_loci.dump());
+    auto &prx = dynamicQuantumArchitecture["gates"]["prx"];
+    implementation = prx["default_implementation"];
+    auto prx_loci = prx["implementations"][implementation]["loci"];
+    cudaq::debug("prx-gates ({}) loci={}", implementation, prx_loci.dump());
+
+    auto &measure = dynamicQuantumArchitecture["gates"]["measure"];
+    implementation = measure["default_implementation"];
+    auto &measure_loci = measure ["implementations"][implementation]["loci"];
+    cudaq::debug("measure ({}) loci={}", implementation, measure_loci.dump());
 
     // Iterate over all cz loci and add only those to the output list for which
     // all qubits have both measure and prx capability.
