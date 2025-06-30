@@ -116,9 +116,6 @@ public:
       tokensFilePath = defaultTokensFilePath;
     }
     cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
-
-    // Fetch the quantum-architecture of the configured IQM server
-    fetchQuantumArchitecture();
   }
 
   /// @brief Create a job payload for the provided quantum codes
@@ -256,6 +253,10 @@ IQMServerHelper::generateRequestHeader() const {
 
 void IQMServerHelper::updatePassPipeline(
     const std::filesystem::path &platformPath, std::string &passPipeline) {
+
+  // Fetch the quantum-architecture of the configured IQM server
+  fetchQuantumArchitecture();
+
   std::string pathToFile;
   auto iter = backendConfig.find("mapping_file");
   if (iter != backendConfig.end()) {
