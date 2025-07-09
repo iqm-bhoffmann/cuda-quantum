@@ -22,7 +22,7 @@ namespace cudaq {
 class IQMServerHelper : public ServerHelper {
 protected:
   /// @brief The base URL
-  std::string iqmServerUrl = "http://localhost/cocos/";
+  std::string iqmServerUrl = "http://localhost/";
 
   /// @brief The default cortex-cli tokens file path
   std::optional<std::string> tokensFilePath = std::nullopt;
@@ -166,7 +166,7 @@ IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   RestHeaders headers = generateRequestHeader();
 
   // return the payload
-  return std::make_tuple(iqmServerUrl + "jobs", headers, messages);
+  return std::make_tuple(iqmServerUrl + "station/circuits", headers, messages);
 }
 
 std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
@@ -174,11 +174,11 @@ std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
 }
 
 std::string IQMServerHelper::constructGetJobPath(ServerMessage &postResponse) {
-  return "jobs" + postResponse["id"].get<std::string>() + "/counts";
+  return "station/circuits" + postResponse["id"].get<std::string>() + "/counts";
 }
 
 std::string IQMServerHelper::constructGetJobPath(std::string &jobId) {
-  return iqmServerUrl + "jobs/" + jobId + "/counts";
+  return iqmServerUrl + "station/circuits/" + jobId + "/counts";
 }
 
 std::chrono::microseconds
@@ -296,9 +296,17 @@ void IQMServerHelper::fetchQuantumArchitecture() {
 
     // From the Static Quantum Architecture we need the total number of qubits
     // and the list of qubit designations.
+    auto stationDuts =
+      client.get(iqmServerUrl, "station/duts", headers);
+    if (stationDuts.size() < 1) {
+      throw std::runtime_error("Station does not contain any DUTs.");
+    }
+    std::string dutLabel = stationDuts[0]["label"];
     auto staticQuantumArchitecture =
-      client.get(iqmServerUrl, "api/v1/quantum-architecture", headers);
-    cudaq::debug("Static QA={}", staticQuantumArchitecture.dump());
+      client.get(iqmServerUrl,
+                 "station/static-quantum-architectures/" + dutLabel, headers);
+    cudaq::debug("Static QA={} from DUT {}",
+                 staticQuantumArchitecture.dump(), dutLabel);
 
     // The number of qubits of this quantum architecture.
     uint qubitCount = staticQuantumArchitecture["qubits"].size();
@@ -313,7 +321,8 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     // which can form cz-gates and additionally the lists of single qubits
     // which can do prx-gates and support measurement.
     auto dynamicQuantumArchitecture =
-      client.get(iqmServerUrl, "api/v1/calibration/default/gates", headers);
+      client.get(iqmServerUrl, "station/calibration-sets/default/"
+                               "dynamic-quantum-architecture", headers);
     cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
     cudaq::info("Server {} has {} qubits", iqmServerUrl, qubitCount);
