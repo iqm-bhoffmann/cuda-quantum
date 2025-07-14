@@ -20,6 +20,20 @@
 namespace cudaq {
 
 class IQMServerHelper : public ServerHelper {
+
+  struct qubitOrder {
+    // Lightweight comparison for strings ending in a number assuming that
+    // all strings have either none or the same prefix and there is a number.
+    // No checks on the string content is done for performance reasons.
+    bool operator()(const std::string& a, const std::string& b) const {
+      if (a.size() < b.size())
+        return true;
+      if (a.size() > b.size())
+        return false;
+      return a.compare(b) < 0;
+    }
+  };
+
 protected:
   /// @brief The base URL
   std::string iqmServerUrl = "http://localhost/";
@@ -31,7 +45,7 @@ protected:
   RestHeaders generateRequestHeader() const;
 
   /// @brief Lookup table for translating the qubit names to index numbers
-  std::map<std::string, uint> qubitNameMap;
+  std::map<std::string, uint, qubitOrder> qubitNameMap;
 
   /// @brief Adjacency map for each qubit
   std::vector<std::set<uint>> qubitAdjacencyMap;
@@ -150,8 +164,17 @@ IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   // so we cannot use the batch mode
   for (auto &circuitCode : circuitCodes) {
     ServerMessage message = ServerMessage::object();
+    message["qubit_mapping"] = ServerMessage::array();
     message["circuits"] = ServerMessage::array();
     message["shots"] = shots;
+
+    // Apply the mapping derived from the dynamic quantum architecture.
+    for (auto &[key, value] : qubitNameMap) {
+      nlohmann::json singleQubitMapping;
+      singleQubitMapping["logical_name"] = "QB" + std::to_string(value + 1);
+      singleQubitMapping["physical_name"] = key;
+      message["qubit_mapping"].push_back(singleQubitMapping);
+    }
 
     ServerMessage yac = nlohmann::json::parse(circuitCode.code);
     yac["name"] = circuitCode.name;
@@ -291,45 +314,13 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     RestClient client;
     auto headers = generateRequestHeader();
 
-    // From the Static Quantum Architecture we need the total number of qubits
-    // and the list of qubit designations.
-    auto stationDuts =
-      client.get(iqmServerUrl, "station/duts", headers);
-    if (stationDuts.size() < 1) {
-      throw std::runtime_error("Station does not contain any DUTs.");
-    }
-    std::string dutLabel = stationDuts[0]["label"];
-    auto staticQuantumArchitecture =
-      client.get(iqmServerUrl,
-                 "station/static-quantum-architectures/" + dutLabel, headers);
-    cudaq::debug("Static QA={} from DUT {}",
-                 staticQuantumArchitecture.dump(), dutLabel);
-
-    // The number of qubits of this quantum architecture.
-    uint qubitCount = staticQuantumArchitecture["qubits"].size();
-
-    // Enumerate the qubit designations.
-    uint idx = 0;
-    for (auto qubit : staticQuantumArchitecture["qubits"]) {
-      qubitNameMap[qubit] = idx++;
-    }
-
-    // From the Dynamic Quantum Architecture we need the list of qubit pairs
-    // which can form cz-gates and additionally the lists of single qubits
-    // which can do prx-gates and support measurement.
+    // From the Dynamic Quantum Architecture we need the list of qubits names,
+    // the list of qubit pairs which can form cz-gates, the lists of qubits
+    // which can do prx-gates and the list of qubits which support measurement.
     auto dynamicQuantumArchitecture =
       client.get(iqmServerUrl, "station/calibration-sets/default/"
                                "dynamic-quantum-architecture", headers);
     cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
-
-    cudaq::info("Server {} has {} qubits", iqmServerUrl, qubitCount);
-
-    // Initialise the adjacency map with an empty set for each qubit
-    std::set<uint> noConnections;
-    qubitAdjacencyMap.reserve(qubitCount);
-    for (uint i = 0; i < qubitCount; i++) {
-      qubitAdjacencyMap.emplace_back(noConnections);
-    }
 
     auto &cz = dynamicQuantumArchitecture["gates"]["cz"];
     auto implementation = cz["default_implementation"];
@@ -346,44 +337,55 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     auto &measure_loci = measure ["implementations"][implementation]["loci"];
     cudaq::debug("measure ({}) loci={}", implementation, measure_loci.dump());
 
-    // Iterate over all cz loci and add only those to the output list for which
-    // all qubits have both measure and prx capability.
+    // For each qubit set flags to indicate whether they can be used in cz,
+    // prx or measurement operations. Then crop all qubits which are not
+    // capable of all three operations and enumerate the remaining ones.
+
+    for (auto qubit : dynamicQuantumArchitecture["qubits"]) {
+      qubitNameMap[qubit] = 0; // initializing to zero meaning no capability
+    }
     for (auto cz : cz_loci) {
-      bool lociUsable = true; // assume usable until proven otherwise
-      bool found = false;
-
-      // each cz loci connects 2 qubits - check each of these individually
+      // each cz loci has 2 qubits - mark each qubit
       for (auto qubit : cz) {   // cz is an array of strings
-
-        // Check whether this qubit has prx capability.
-        found = false;
-        for (auto it = prx_loci.begin(); it != prx_loci.end() ; it++) {
-          if ((*it)[0] == qubit) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          lociUsable = false;
-          break;
-        }
-
-        // Check whether this qubit has measurement capability.
-        found = false;
-        for (auto it = measure_loci.begin(); it != measure_loci.end() ; it++) {
-          if ((*it)[0] == qubit) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          lociUsable = false;
-          break;
-        }
+        qubitNameMap[qubit] |= 1 << 0;
       }
+    }
+    for (auto prx : prx_loci) {
+      qubitNameMap[prx[0]] |= 1 << 1;
+    }
+    for (auto measure : measure_loci) {
+      qubitNameMap[measure[0]] |= 1 << 2;
+    }
 
-      if (lociUsable) {
-        // This cz_loci has passed all the tests so add it to the list.
+    uint idx = 0; // enumeration counter
+    for (auto qubit = qubitNameMap.begin(); qubit != qubitNameMap.end();) {
+      if (qubit->second == 7) { // 7 = (1 << 0) | (1 << 1) | (1 << 2)
+        qubit->second = idx++; // from here on the enum value is set
+        qubit++;
+      }
+      else {
+        qubit = qubitNameMap.erase(qubit);
+      }
+    }
+
+    // The number of qubits in this dynamic quantum architecture.
+    uint qubitCount = qubitNameMap.size();
+    cudaq::info("Server {} has {} calibrated qubits", iqmServerUrl, qubitCount);
+
+    for (auto &[key, value] : qubitNameMap) {
+      cudaq::debug("qubit mapping: {} = {}", key, value);
+    }
+
+    // Initialise the adjacency map with an empty set for each qubit
+    qubitAdjacencyMap.reserve(qubitCount);
+    for (uint i = 0; i < qubitCount; i++) {
+      qubitAdjacencyMap.emplace_back();
+    }
+
+    // Iterate over all cz loci and add only those to the adjacency map
+    // for which all qubits have both measure and prx capability.
+    for (auto cz : cz_loci) {
+      if (qubitNameMap.count(cz[0]) && qubitNameMap.count(cz[1])) {
         cudaq::debug("usable cz_loci {}", cz.dump());
         qubitAdjacencyMap[qubitNameMap[cz[0]]].insert(qubitNameMap[cz[1]]);
         qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
