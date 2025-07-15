@@ -38,6 +38,9 @@ protected:
   /// @brief The base URL
   std::string iqmServerUrl = "http://localhost/";
 
+  /// @brief Authentication token
+  std::optional<std::string> authToken = std::nullopt;
+
   /// @brief The default cortex-cli tokens file path
   std::optional<std::string> tokensFilePath = std::nullopt;
 
@@ -116,17 +119,23 @@ public:
       return;
     }
 
-    // Set alternative cortex-cli tokens file path if provided via env var
-    auto envTokenFilePath = getenv("IQM_TOKENS_FILE");
-    auto defaultTokensFilePath =
-        std::string(getenv("HOME")) + "/.cache/iqm-cortex-cli/tokens.json";
-    cudaq::debug("defaultTokensFilePath = {}", defaultTokensFilePath);
-    if (envTokenFilePath) {
-      tokensFilePath = std::string(envTokenFilePath);
-    } else if (cudaq::fileExists(defaultTokensFilePath)) {
-      tokensFilePath = defaultTokensFilePath;
+    auto token = getenv("IQM_TOKEN");
+    if (token) {
+      authToken = std::string(token);
+      cudaq::debug("Using authorization token from environment variable");
+    } else {
+      // Set alternative iqmclient-cli tokens file path if provided via env var
+      auto envTokenFilePath = getenv("IQM_TOKENS_FILE");
+      auto defaultTokensFilePath =
+          std::string(getenv("HOME")) + "/.cache/iqm-client-cli/tokens.json";
+      if (envTokenFilePath) {
+        tokensFilePath = std::string(envTokenFilePath);
+      } else if (cudaq::fileExists(defaultTokensFilePath)) {
+        tokensFilePath = defaultTokensFilePath;
+        cudaq::debug("Setting default path for tokens file");
+      }
+      cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
     }
-    cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
   }
 
   /// @brief Create a job payload for the provided quantum codes
@@ -264,10 +273,19 @@ IQMServerHelper::generateRequestHeader() const {
       {"Connection", "keep-alive"},
       {"User-Agent", "cudaq/IQMServerHelper"},
       {"Accept", "*/*"}};
-  auto apiToken = readApiToken();
-  if (apiToken.has_value()) {
-    headers["Authorization"] = "Bearer " + apiToken.value();
-  };
+
+  // Prefer the authorization token set in the environment variable.
+  if (authToken.has_value()) {
+    headers["Authorization"] = "Bearer " + authToken.value();
+  }
+  else {
+    // Fallback to authorization token from legacy JSON file.
+    auto apiToken = readApiToken();
+    if (apiToken.has_value()) {
+      headers["Authorization"] = "Bearer " + apiToken.value();
+    };
+  }
+
   return headers;
 }
 
