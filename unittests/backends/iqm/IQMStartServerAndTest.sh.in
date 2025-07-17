@@ -44,7 +44,11 @@ while ! checkServerConnection; do
   fi
 done
 # Run the tests
-IQM_TOKENS_FILE=$tmp_file ./test_iqm
+if [ a${IQM_SERVER_URL} = a ]; then
+  IQM_TOKEN="good_access_token" IQM_TOKENS_FILE=$tmp_file ./test_iqm
+else
+  ./test_iqm
+fi
 # Did they fail?
 testsPassed=$?
 # kill the server
