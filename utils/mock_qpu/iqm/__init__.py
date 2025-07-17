@@ -22,8 +22,45 @@ import numpy as np
 good_access_token = "Bearer good_access_token"
 server_qpu_architecture = "Apollo"
 operations = []  # TBA
-qubits = []  # TBA
-qubit_connectivity = []  # TBA
+qubits = [
+        "QB1", "QB2", "QB3", "QB4", "QB5",
+        "QB6", "QB7", "QB8", "QB9", "QB10",
+        "QB11", "QB12", "QB13", "QB14", "QB15",
+        "QB16", "QB17", "QB18", "QB19", "QB20"
+    ]
+qubit_connectivity = [
+        ["QB1", "QB2"],
+        ["QB1", "QB4"],
+        ["QB2", "QB5"],
+        ["QB3", "QB4"],
+        ["QB3", "QB8"],
+        ["QB4", "QB5"],
+        ["QB4", "QB9"],
+        ["QB5", "QB6"],
+        ["QB5", "QB10"],
+        ["QB6", "QB7"],
+        ["QB6", "QB11"],
+        ["QB7", "QB12"],
+        ["QB8", "QB9"],
+        ["QB8", "QB13"],
+        ["QB9", "QB10"],
+        ["QB9", "QB14"],
+        ["QB10", "QB11"],
+        ["QB10", "QB15"],
+        ["QB11", "QB12"],
+        ["QB11", "QB16"],
+        ["QB12", "QB17"],
+        ["QB13", "QB14"],
+        ["QB14", "QB15"],
+        ["QB14", "QB18"],
+        ["QB15", "QB16"],
+        ["QB15", "QB19"],
+        ["QB16", "QB17"],
+        ["QB16", "QB20"],
+        ["QB18", "QB19"],
+        ["QB19", "QB20"],
+    ]
+computational_resonators = []
 
 # Define the REST Server App
 app = FastAPI()
@@ -129,7 +166,7 @@ def _validate_measurements(job: Job, circuit: iqm_client.Circuit) -> bool:
     """Check that the circuit contains measurements"""
     measurements = [
         instruction for instruction in circuit.instructions
-        if instruction.name == "measurement"
+        if instruction.name == "measure"
     ]
     if len(measurements) == 0:
         job.status = iqm_client.Status.FAILED
@@ -172,7 +209,7 @@ def _gather_circuit_information(
         all_qubits.update(
             _extract_qubit_position_from_qubit_name(qb)
             for qb in list(instruction.qubits))
-        if instruction.name == "measurement":
+        if instruction.name == "measure":
             measurement_qubits.update(
                 _extract_qubit_position_from_qubit_name(qb)
                 for qb in list(instruction.qubits))
@@ -193,7 +230,7 @@ def _simulate_circuit(instructions: list[iqm_client.Instruction],
     operator = operator.reshape(2 * dims)
 
     for instruction in instructions:
-        if instruction.name == "phased_rx":
+        if instruction.name == "prx":
             qubit_position = _extract_qubit_position_from_qubit_name(
                 instruction.qubits[0])
             r_gate = _make_phased_rx_unitary_matrix(
@@ -286,7 +323,92 @@ async def get_quantum_architecture(
         ))
 
 
-@app.post("/jobs")
+@app.get("/calibration-sets/default/dynamic-quantum-architecture")
+async def get_v1_quantum_architecture(
+        request: Request) -> iqm_client.DynamicQuantumArchitecture:
+    """Get the dynamic quantum architecture"""
+
+    access_token = request.headers.get("Authorization")
+    if access_token != good_access_token:
+        raise HTTPException(401)
+
+    return iqm_client.DynamicQuantumArchitecture(
+        calibration_set_id=str(uuid.uuid4()),
+        qubits=qubits,
+        computational_resonators=computational_resonators,
+        gates={
+            "cz": iqm_client.GateInfo(
+                implementations={
+                    "crf_crf": iqm_client.GateImplementationInfo(
+                        loci=(
+                            ("QB1", "QB2"),
+                            ("QB1", "QB4"),
+                            ("QB2", "QB5"),
+                            ("QB3", "QB4"),
+                            ("QB3", "QB8"),
+                            ("QB4", "QB5"),
+                            ("QB4", "QB9"),
+                            ("QB5", "QB6"),
+                            ("QB5", "QB10"),
+                            ("QB6", "QB7"),
+                            ("QB6", "QB11"),
+                            ("QB7", "QB12"),
+                            ("QB8", "QB9"),
+                            ("QB8", "QB13"),
+                            ("QB9", "QB10"),
+                            ("QB9", "QB14"),
+                            ("QB10", "QB11"),
+                            ("QB10", "QB15"),
+                            ("QB11", "QB12"),
+                            ("QB11", "QB16"),
+                            ("QB12", "QB17"),
+                            ("QB13", "QB14"),
+                            ("QB14", "QB15"),
+                            ("QB14", "QB18"),
+                            ("QB15", "QB16"),
+                            ("QB15", "QB19"),
+                            ("QB16", "QB17"),
+                            ("QB16", "QB20"),
+                            ("QB18", "QB19"),
+                            ("QB19", "QB20"),
+                        )),
+                },
+                default_implementation="crf_crf",
+                override_default_implementation={},
+            ),
+            "measure": iqm_client.GateInfo(
+                implementations={
+                    "constant": iqm_client.GateImplementationInfo(
+                        loci=(
+                            ("QB1",), ("QB2",), ("QB3",), ("QB4",),
+                            ("QB5",), ("QB6",), ("QB7",), ("QB8",),
+                            ("QB9",), ("QB10",), ("QB11",), ("QB12",),
+                            ("QB13",), ("QB14",), ("QB15",), ("QB16",),
+                            ("QB17",), ("QB18",), ("QB19",), ("QB20",),
+                        ))
+                },
+                default_implementation="constant",
+                override_default_implementation={},
+            ),
+            "prx": iqm_client.GateInfo(
+                implementations={
+                    "drag_crf": iqm_client.GateImplementationInfo(
+                        loci=(
+                            ("QB1",), ("QB2",), ("QB3",), ("QB4",),
+                            ("QB5",), ("QB6",), ("QB7",), ("QB8",),
+                            ("QB9",), ("QB10",), ("QB11",), ("QB12",),
+                            ("QB13",), ("QB14",), ("QB15",), ("QB16",),
+                            ("QB17",), ("QB18",), ("QB19",), ("QB20",),
+                        ))
+                },
+                default_implementation="drag_crf",
+                override_default_implementation={},
+            ),
+        }
+    )
+
+
+@app.post("/circuits")
 async def post_jobs(job_request: iqm_client.RunRequest,
                     request: Request) -> PostJobsResponse:
     """Register a new job and start execution"""
@@ -299,7 +421,7 @@ async def post_jobs(job_request: iqm_client.RunRequest,
     new_job_id = str(uuid.uuid4())
     new_job = Job(
         id=new_job_id,
-        status=iqm_client.Status.PENDING_COMPILATION,
+        status=iqm_client.Status.COMPILATION_STARTED,
         request=job_request,
         metadata=metadata,
     )
@@ -312,7 +434,7 @@ async def post_jobs(job_request: iqm_client.RunRequest,
     return PostJobsResponse(id=new_job_id)
 
 
-@app.get("/jobs/{job_id}/status")
+@app.get("/circuits/{job_id}/status")
 async def get_jobs_status(job_id: str, request: Request) -> iqm_client.Status:
     """Get the status of a job"""
 
@@ -326,7 +448,7 @@ async def get_jobs_status(job_id: str, request: Request) -> iqm_client.Status:
     return createdJobs[job_id].status
 
 
-@app.get("/jobs/{job_id}/counts")
+@app.get("/circuits/{job_id}/counts")
 async def get_jobs(job_id: str, request: Request):
     """Get the result of a job"""
     access_token = request.headers.get("Authorization")
