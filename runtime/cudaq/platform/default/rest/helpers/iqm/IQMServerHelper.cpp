@@ -24,7 +24,7 @@ class IQMServerHelper : public ServerHelper {
   struct qubitOrder {
     // Lightweight comparison for strings ending in a number assuming that
     // all strings have either none or the same prefix and there is a number.
-    // No checks on the string content is done for performance reasons.
+    // No checks on the string composition is done for performance reasons.
     bool operator()(const std::string& a, const std::string& b) const {
       if (a.size() < b.size())
         return true;
@@ -378,17 +378,21 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     uint idx = 0; // enumeration counter
     for (auto qubit = qubitNameMap.begin(); qubit != qubitNameMap.end();) {
       if (qubit->second == 7) { // 7 = (1 << 0) | (1 << 1) | (1 << 2)
-        qubit->second = idx++; // from here on the enum value is set
+        qubit->second = idx++; // replace flags with enumeration value
         qubit++;
       }
       else {
         qubit = qubitNameMap.erase(qubit);
       }
     }
+    // From here on the qubitNameMap lists only qubits which can be used
+    // for above listed operations. Each qubit in the list is enumerated
+    // starting with a value of 0.
 
     // The number of qubits in this dynamic quantum architecture.
     uint qubitCount = qubitNameMap.size();
     cudaq::info("Server {} has {} calibrated qubits", iqmServerUrl, qubitCount);
+    assert(idx == qubitCount);
 
     for (auto &[key, value] : qubitNameMap) {
       cudaq::debug("qubit mapping: {} = {}", key, value);
