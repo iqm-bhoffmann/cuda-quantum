@@ -195,7 +195,7 @@ IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   RestHeaders headers = generateRequestHeader();
 
   // return the payload
-  return std::make_tuple(iqmServerUrl + "station/circuits", headers, messages);
+  return std::make_tuple(iqmServerUrl + "circuits", headers, messages);
 }
 
 std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
@@ -203,11 +203,11 @@ std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
 }
 
 std::string IQMServerHelper::constructGetJobPath(ServerMessage &postResponse) {
-  return "station/circuits" + postResponse["id"].get<std::string>() + "/counts";
+  return "circuits" + postResponse["id"].get<std::string>() + "/counts";
 }
 
 std::string IQMServerHelper::constructGetJobPath(std::string &jobId) {
-  return iqmServerUrl + "station/circuits/" + jobId + "/counts";
+  return iqmServerUrl + "circuits/" + jobId + "/counts";
 }
 
 std::chrono::microseconds
@@ -336,7 +336,7 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     // the list of qubit pairs which can form cz-gates, the lists of qubits
     // which can do prx-gates and the list of qubits which support measurement.
     auto dynamicQuantumArchitecture =
-      client.get(iqmServerUrl, "station/calibration-sets/default/"
+      client.get(iqmServerUrl, "calibration-sets/default/"
                                "dynamic-quantum-architecture", headers);
     cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
