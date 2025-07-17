@@ -69,9 +69,9 @@ def startUpMockServer():
     # Set the targeted QPU
     os.environ["IQM_TOKENS_FILE"] = tmp_tokens_file.name
     kwargs = {"qpu-architecture": "Apollo"}
-#    if os.path.isdir(git_top):
-#        mapping_file = f"{git_top}/targettests/Apollo Variant.txt"
-#        kwargs["mapping_file"] = mapping_file
+    # if os.path.isdir(git_top):
+    #     mapping_file = f"{git_top}/targettests/Apollo Variant.txt"
+    #     kwargs["mapping_file"] = mapping_file
     cudaq.set_target("iqm", url="http://localhost:{}".format(port), **kwargs)
 
     yield "Running the tests."
