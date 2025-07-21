@@ -16,6 +16,8 @@
 #include <regex>
 #include <unordered_map>
 #include <unordered_set>
+#include <stdio.h>
+#include <stdlib.h>
 
 namespace cudaq {
 
@@ -47,12 +49,6 @@ protected:
   /// @brief Return the headers required for the REST calls
   RestHeaders generateRequestHeader() const;
 
-  /// @brief Lookup table for translating the qubit names to index numbers
-  std::map<std::string, uint, qubitOrder> qubitNameMap;
-
-  /// @brief Adjacency map for each qubit
-  std::vector<std::set<uint>> qubitAdjacencyMap;
-
   /// @brief Parse cortex-cli tokens JSON for the API access token
   std::optional<std::string> readApiToken() const {
     if (!tokensFilePath.has_value()) {
@@ -73,70 +69,29 @@ protected:
     return tokens["access_token"].get<std::string>();
   }
 
+  /// @brief Lookup table for translating the qubit names to index numbers
+  std::map<std::string, uint, qubitOrder> qubitNameMap;
+
+  /// @brief Adjacency map for each qubit
+  std::vector<std::set<uint>> qubitAdjacencyMap;
+
+  /// @brief full path+name of the file containing the quantum architecture
+  std::string quantumArchitectureFilePath;
+
   /// @brief Fetch the quantum architecture from server
   void fetchQuantumArchitecture();
 
   /// @brief Write the dynamic quantum architecture file
-  void writeQuantumArchitectureFile(std::string filename);
+  std::string writeQuantumArchitectureFile(void);
 
 public:
   /// @brief Return the name of this server helper, must be the
   /// same as the qpu config file.
   const std::string name() const override { return "iqm"; }
-  RestHeaders getHeaders() override;
 
-  void initialize(BackendConfig config) override {
-    backendConfig = config;
+  RestHeaders getHeaders() override { return generateRequestHeader(); }
 
-    bool emulate = false;
-    auto iter = backendConfig.find("emulate");
-    if (iter != backendConfig.end()) {
-      emulate = iter->second == "true";
-    }
-
-    // Set an alternate base URL if provided.
-    iter = backendConfig.find("url");
-    if (iter != backendConfig.end()) {
-      iqmServerUrl = iter->second;
-    }
-
-    // Allow overriding IQM Server Url, the compiled program will still work if
-    // architecture matches. This is useful in case we're using the same program
-    // against different backends, for example simulated and actually connected
-    // to the hardware.
-    auto envIqmServerUrl = getenv("IQM_SERVER_URL");
-    if (envIqmServerUrl) {
-      iqmServerUrl = std::string(envIqmServerUrl);
-    }
-
-    if (!iqmServerUrl.ends_with("/"))
-      iqmServerUrl += "/";
-    cudaq::debug("iqmServerUrl = {}", iqmServerUrl);
-
-    if (emulate) {
-      cudaq::info(
-          "Emulation is enabled, ignore tokens file and IQM Server URL");
-      return;
-    }
-
-    auto token = getenv("IQM_TOKEN");
-    if (token) {
-      authToken = std::string(token);
-      cudaq::debug("Using authorization token from environment variable");
-    } else {
-      // Set alternative iqmclient-cli tokens file path if provided via env var
-      auto envTokenFilePath = getenv("IQM_TOKENS_FILE");
-      auto defaultTokensFilePath =
-          std::string(getenv("HOME")) + "/.cache/iqm-client-cli/tokens.json";
-      if (envTokenFilePath) {
-        tokensFilePath = std::string(envTokenFilePath);
-      } else if (cudaq::fileExists(defaultTokensFilePath)) {
-        tokensFilePath = defaultTokensFilePath;
-        cudaq::debug("Setting default path for tokens file");
-      }
-      cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
-    }
-  }
+  void initialize(BackendConfig config) override;
 
   /// @brief Create a job payload for the provided quantum codes
   ServerJobPayload
@@ -163,7 +118,71 @@ public:
   /// @brief Update `passPipeline` with architecture-specific pass options
   void updatePassPipeline(const std::filesystem::path &platformPath,
                           std::string &passPipeline) override;
+
+  /// @brief Default destructor removes the dynamic quantum architecture file
+  ~IQMServerHelper() {
+    if (!quantumArchitectureFilePath.empty()) {
+      if (unlink(quantumArchitectureFilePath.c_str()) != 0) {
+        cudaq::info("Failed to delete {} with errno:{}",
+                    quantumArchitectureFilePath, errno);
+      }
+    }
+  }
 };
+
+void
+IQMServerHelper::initialize(BackendConfig config) {
+  backendConfig = config;
+
+  bool emulate = false;
+  auto iter = backendConfig.find("emulate");
+  if (iter != backendConfig.end()) {
+    emulate = iter->second == "true";
+  }
+
+  // Set an alternate base URL if provided.
+  iter = backendConfig.find("url");
+  if (iter != backendConfig.end()) {
+    iqmServerUrl = iter->second;
+  }
+
+  // Allow overriding IQM Server Url, the compiled program will still work if
+  // architecture matches. This is useful in case we're using the same program
+  // against different backends, for example simulated and actually connected
+  // to the hardware.
+  auto envIqmServerUrl = getenv("IQM_SERVER_URL");
+  if (envIqmServerUrl) {
+    iqmServerUrl = std::string(envIqmServerUrl);
+  }
+
+  if (!iqmServerUrl.ends_with("/"))
+    iqmServerUrl += "/";
+  cudaq::debug("iqmServerUrl = {}", iqmServerUrl);
+
+  if (emulate) {
+    cudaq::info(
+        "Emulation is enabled, ignore tokens file and IQM Server URL");
+    return;
+  }
+
+  auto token = getenv("IQM_TOKEN");
+  if (token) {
+    authToken = std::string(token);
+    cudaq::debug("Using authorization token from environment variable");
+  } else {
+    // Set alternative iqmclient-cli tokens file path if provided via env var
+    auto envTokenFilePath = getenv("IQM_TOKENS_FILE");
+    auto defaultTokensFilePath =
+        std::string(getenv("HOME")) + "/.cache/iqm-client-cli/tokens.json";
+    if (envTokenFilePath) {
+      tokensFilePath = std::string(envTokenFilePath);
+    } else if (cudaq::fileExists(defaultTokensFilePath)) {
+      tokensFilePath = defaultTokensFilePath;
+      cudaq::debug("Setting default path for tokens file");
+    }
+    cudaq::debug("tokensFilePath = {}", tokensFilePath.value_or("not set"));
+  }
+}
 
 ServerJobPayload
 IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
@@ -291,41 +310,36 @@ IQMServerHelper::generateRequestHeader() const {
 
 void IQMServerHelper::updatePassPipeline(
     const std::filesystem::path &platformPath, std::string &passPipeline) {
-
-  // Fetch the quantum-architecture of the configured IQM server
-  fetchQuantumArchitecture();
-
   std::string pathToFile;
+
   auto iter = backendConfig.find("mapping_file");
   if (iter != backendConfig.end()) {
     // Use provided string as path+filename
     pathToFile = iter->second;
   } else {
-    // Construct path to file
-    pathToFile =
-        std::string(platformPath / std::string("mapping/iqm") /
-                    (std::string("qpu-architecture.txt")));
-    cudaq::debug("quantum architecture file: {}", pathToFile);
-
-    writeQuantumArchitectureFile(pathToFile);
+    // Use the dynamic quantum architecture of the configured IQM server
+    fetchQuantumArchitecture();
+    pathToFile = writeQuantumArchitectureFile();
   }
+  cudaq::info("Using quantum architecture file: {}", pathToFile);
 
-  // Add leading and trailing single quotes in case there are spaces in the
-  // filename.
+  // Add leading and trailing single quotes to protect the filepath from
+  // shell glob.
   pathToFile.insert(0, "'").append("'");
 
   passPipeline =
-      std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
+    std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
 }
-
-RestHeaders IQMServerHelper::getHeaders() { return generateRequestHeader(); }
 
 /**
  * Fetch the quantum architecture from the configured URL and create a qubit
- * adjacency map. The map contains only qubits which can be measured and can
+ * adjacency map.
+ *
+ * The qubit adjacency map contains only qubits which can be measured and can
  * be used in prx-gates as well as cz-gates. As qubits pairs for cz-gates
  * connect only a few qubits the information about neighbors is stored as sets
  * within a vector of all qubits to save memory.
+ * @throws std::runtime_error thrown for any errors with the server.
  */
 void IQMServerHelper::fetchQuantumArchitecture() {
   try {
@@ -386,8 +400,8 @@ void IQMServerHelper::fetchQuantumArchitecture() {
       }
     }
     // From here on the qubitNameMap lists only qubits which can be used
-    // for above listed operations. Each qubit in the list is enumerated
-    // starting with a value of 0.
+    // for above listed operations. Starting with 0 each qubit in the list
+    // is enumerated.
 
     // The number of qubits in this dynamic quantum architecture.
     uint qubitCount = qubitNameMap.size();
@@ -421,17 +435,30 @@ void IQMServerHelper::fetchQuantumArchitecture() {
 } // IQMServerHelper::fetchQuantumArchitecture()
 
 /**
- * Write the dynamic quantum architecture to the specified filename. If the
- * file cannot be opened for writing an exception is thrown.
- * @param filename String with path+filename to write to.
- * @throws std::runtime_error Thrown when file cannot be opened for writing.
+ * Write the content of the dynamic quantum architecture to file.
+ *
+ * The file is created in the sytem temporary file folder with an automatically
+ * generated unique filename. The filename is returned by this function.
+ *
+ * @return String containing the generated filename.
+ * @throws std::runtime_error thrown when file cannot be opened for writing.
  */
-void IQMServerHelper::writeQuantumArchitectureFile(std::string filename) {
+std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
   uint qubitCount = qubitAdjacencyMap.size();
 
-  FILE* file = fopen(filename.c_str(), "w");
-  if (!file) {
-    throw std::runtime_error("cannot write QPU architecture file" + filename);
+  // path to temporary file + unique filename
+  quantumArchitectureFilePath =
+      std::string(P_tmpdir) + "/qpu-architecture-XXXXXX";
+  int fd = mkstemp(quantumArchitectureFilePath.data());
+  if (fd < 0) {
+    throw std::runtime_error("cannot write QPU architecture file" +
+                              quantumArchitectureFilePath);
+  }
+  // open also as FILE which has better formatting with fprintf()
+  FILE *file = fdopen(fd, "w");
+  if (file == NULL) {
+    throw std::runtime_error("cannot write QPU architecture file" +
+                              quantumArchitectureFilePath);
   }
 
   // Header information
@@ -458,6 +485,9 @@ void IQMServerHelper::writeQuantumArchitectureFile(std::string filename) {
   }
 
   fclose(file);
+  close(fd);
+
+  return quantumArchitectureFilePath;
 } // IQMServerHelper::writeQuantumArchitectureFile()
 
 } // namespace cudaq
