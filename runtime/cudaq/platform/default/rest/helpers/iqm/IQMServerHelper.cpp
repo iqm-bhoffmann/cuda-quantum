@@ -14,10 +14,10 @@
 
 #include <fstream>
 #include <regex>
-#include <unordered_map>
-#include <unordered_set>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace cudaq {
 
@@ -27,7 +27,7 @@ class IQMServerHelper : public ServerHelper {
     // Lightweight comparison for strings ending in a number assuming that
     // all strings have either none or the same prefix and there is a number.
     // No checks on the string composition is done for performance reasons.
-    bool operator()(const std::string& a, const std::string& b) const {
+    bool operator()(const std::string &a, const std::string &b) const {
       if (a.size() < b.size())
         return true;
       if (a.size() > b.size())
@@ -130,8 +130,7 @@ public:
   }
 };
 
-void
-IQMServerHelper::initialize(BackendConfig config) {
+void IQMServerHelper::initialize(BackendConfig config) {
   backendConfig = config;
 
   bool emulate = false;
@@ -160,8 +159,7 @@ IQMServerHelper::initialize(BackendConfig config) {
   cudaq::debug("iqmServerUrl = {}", iqmServerUrl);
 
   if (emulate) {
-    cudaq::info(
-        "Emulation is enabled, ignore tokens file and IQM Server URL");
+    cudaq::info("Emulation is enabled, ignore tokens file and IQM Server URL");
     return;
   }
 
@@ -296,8 +294,7 @@ IQMServerHelper::generateRequestHeader() const {
   // Prefer the authorization token set in the environment variable.
   if (authToken.has_value()) {
     headers["Authorization"] = "Bearer " + authToken.value();
-  }
-  else {
+  } else {
     // Fallback to authorization token from legacy JSON file.
     auto apiToken = readApiToken();
     if (apiToken.has_value()) {
@@ -328,7 +325,7 @@ void IQMServerHelper::updatePassPipeline(
   pathToFile.insert(0, "'").append("'");
 
   passPipeline =
-    std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
+      std::regex_replace(passPipeline, std::regex("%QPU_ARCH%"), pathToFile);
 }
 
 /**
@@ -349,9 +346,10 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     // From the Dynamic Quantum Architecture we need the list of qubits names,
     // the list of qubit pairs which can form cz-gates, the lists of qubits
     // which can do prx-gates and the list of qubits which support measurement.
-    auto dynamicQuantumArchitecture =
-      client.get(iqmServerUrl, "calibration-sets/default/"
-                               "dynamic-quantum-architecture", headers);
+    auto dynamicQuantumArchitecture = client.get(iqmServerUrl,
+                                                 "calibration-sets/default/"
+                                                 "dynamic-quantum-architecture",
+                                                 headers);
     cudaq::debug("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
     auto &cz = dynamicQuantumArchitecture["gates"]["cz"];
@@ -366,7 +364,7 @@ void IQMServerHelper::fetchQuantumArchitecture() {
 
     auto &measure = dynamicQuantumArchitecture["gates"]["measure"];
     implementation = measure["default_implementation"];
-    auto &measure_loci = measure ["implementations"][implementation]["loci"];
+    auto &measure_loci = measure["implementations"][implementation]["loci"];
     cudaq::debug("measure ({}) loci={}", implementation, measure_loci.dump());
 
     // For each qubit set flags to indicate whether they can be used in cz,
@@ -378,7 +376,7 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     }
     for (auto cz : cz_loci) {
       // each cz loci has 2 qubits - mark each qubit
-      for (auto qubit : cz) {   // cz is an array of strings
+      for (auto qubit : cz) { // cz is an array of strings
         qubitNameMap[qubit] |= 1 << 0;
       }
     }
@@ -392,10 +390,9 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     uint idx = 0; // enumeration counter
     for (auto qubit = qubitNameMap.begin(); qubit != qubitNameMap.end();) {
       if (qubit->second == 7) { // 7 = (1 << 0) | (1 << 1) | (1 << 2)
-        qubit->second = idx++; // replace flags with enumeration value
+        qubit->second = idx++;  // replace flags with enumeration value
         qubit++;
-      }
-      else {
+      } else {
         qubit = qubitNameMap.erase(qubit);
       }
     }
@@ -427,10 +424,9 @@ void IQMServerHelper::fetchQuantumArchitecture() {
         qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
       }
     } // for all cz loci
-  }
-  catch (const std::exception &e) {
+  } catch (const std::exception &e) {
     throw std::runtime_error("Unable to get quantum architecture from \"" +
-                            iqmServerUrl + "\": " + std::string(e.what()));
+                             iqmServerUrl + "\": " + std::string(e.what()));
   }
 } // IQMServerHelper::fetchQuantumArchitecture()
 
@@ -452,18 +448,18 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
   int fd = mkstemp(quantumArchitectureFilePath.data());
   if (fd < 0) {
     throw std::runtime_error("cannot write QPU architecture file" +
-                              quantumArchitectureFilePath);
+                             quantumArchitectureFilePath);
   }
   // open also as FILE which has better formatting with fprintf()
   FILE *file = fdopen(fd, "w");
   if (file == NULL) {
     throw std::runtime_error("cannot write QPU architecture file" +
-                              quantumArchitectureFilePath);
+                             quantumArchitectureFilePath);
   }
 
   // Header information
-  fprintf(file, "# NOTE: automatically generated by " __FILE__ "\n"
-                "#       for server at URL: %s\n\n", iqmServerUrl.c_str());
+  fprintf(file, "# NOTE: automatically generated by " __FILE__ "\n");
+  fprintf(file, "#       for server at URL: %s\n\n", iqmServerUrl.c_str());
   fprintf(file, "Number of nodes: %u\n", qubitCount);
   fprintf(file, "Number of edges: ?\n\n");
 
@@ -474,7 +470,7 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
     std::string outputLine = std::to_string(i) + " --> {";
     for (uint node : qubitAdjacencyMap[i]) {
       if (first)
-        first=false;
+        first = false;
       else
         outputLine += ", ";
       outputLine += std::to_string(node);

@@ -19,9 +19,8 @@
 #include <fstream>
 #include <regex>
 
-std::string backendString =
-    "iqm;emulate;false;url;"
-    "http://localhost:62443";
+std::string backendString = "iqm;emulate;false;url;"
+                            "http://localhost:62443";
 
 CUDAQ_TEST(IQMTester, executeOneMeasuredQubitProgram) {
   auto &platform = cudaq::get_platform();
@@ -106,9 +105,9 @@ CUDAQ_TEST(IQMTester, invalidTokenFromEnvVariable) {
           testing::HasSubstr("HTTP GET Error - status code 401")));
 
   if (token) {
-      setenv("IQM_TOKEN", token, true);
+    setenv("IQM_TOKEN", token, true);
   } else {
-      unsetenv("IQM_TOKEN");
+    unsetenv("IQM_TOKEN");
   }
 }
 
@@ -125,9 +124,9 @@ CUDAQ_TEST(IQMTester, iqmServerUrlEnvOverride) {
           testing::HasSubstr("Could not resolve host: fake-fake-fake")));
 
   if (url) {
-      setenv("IQM_SERVER_URL", url, true);
+    setenv("IQM_SERVER_URL", url, true);
   } else {
-      unsetenv("IQM_SERVER_URL");
+    unsetenv("IQM_SERVER_URL");
   }
 }
 
@@ -149,9 +148,9 @@ CUDAQ_TEST(IQMTester, tokenFilePathEnvOverride) {
           testing::HasSubstr("Unable to open tokens file: fake-fake-fake")));
 
   if (token) {
-      setenv("IQM_TOKEN", token, true);
+    setenv("IQM_TOKEN", token, true);
   } else {
-      unsetenv("IQM_TOKEN");
+    unsetenv("IQM_TOKEN");
   }
   if (tfile) {
     setenv("IQM_TOKENS_FILE", tfile, true);

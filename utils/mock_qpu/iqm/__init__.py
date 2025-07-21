@@ -23,43 +23,43 @@ good_access_token = "Bearer good_access_token"
 server_qpu_architecture = "Apollo"
 operations = []  # TBA
 qubits = [
-        "QB1", "QB2", "QB3", "QB4", "QB5",
-        "QB6", "QB7", "QB8", "QB9", "QB10",
-        "QB11", "QB12", "QB13", "QB14", "QB15",
-        "QB16", "QB17", "QB18", "QB19", "QB20"
-    ]
+    "QB1", "QB2", "QB3", "QB4", "QB5",
+    "QB6", "QB7", "QB8", "QB9", "QB10",
+    "QB11", "QB12", "QB13", "QB14", "QB15",
+    "QB16", "QB17", "QB18", "QB19", "QB20"
+]
 qubit_connectivity = [
-        ["QB1", "QB2"],
-        ["QB1", "QB4"],
-        ["QB2", "QB5"],
-        ["QB3", "QB4"],
-        ["QB3", "QB8"],
-        ["QB4", "QB5"],
-        ["QB4", "QB9"],
-        ["QB5", "QB6"],
-        ["QB5", "QB10"],
-        ["QB6", "QB7"],
-        ["QB6", "QB11"],
-        ["QB7", "QB12"],
-        ["QB8", "QB9"],
-        ["QB8", "QB13"],
-        ["QB9", "QB10"],
-        ["QB9", "QB14"],
-        ["QB10", "QB11"],
-        ["QB10", "QB15"],
-        ["QB11", "QB12"],
-        ["QB11", "QB16"],
-        ["QB12", "QB17"],
-        ["QB13", "QB14"],
-        ["QB14", "QB15"],
-        ["QB14", "QB18"],
-        ["QB15", "QB16"],
-        ["QB15", "QB19"],
-        ["QB16", "QB17"],
-        ["QB16", "QB20"],
-        ["QB18", "QB19"],
-        ["QB19", "QB20"],
-    ]
+    ["QB1", "QB2"],
+    ["QB1", "QB4"],
+    ["QB2", "QB5"],
+    ["QB3", "QB4"],
+    ["QB3", "QB8"],
+    ["QB4", "QB5"],
+    ["QB4", "QB9"],
+    ["QB5", "QB6"],
+    ["QB5", "QB10"],
+    ["QB6", "QB7"],
+    ["QB6", "QB11"],
+    ["QB7", "QB12"],
+    ["QB8", "QB9"],
+    ["QB8", "QB13"],
+    ["QB9", "QB10"],
+    ["QB9", "QB14"],
+    ["QB10", "QB11"],
+    ["QB10", "QB15"],
+    ["QB11", "QB12"],
+    ["QB11", "QB16"],
+    ["QB12", "QB17"],
+    ["QB13", "QB14"],
+    ["QB14", "QB15"],
+    ["QB14", "QB18"],
+    ["QB15", "QB16"],
+    ["QB15", "QB19"],
+    ["QB16", "QB17"],
+    ["QB16", "QB20"],
+    ["QB18", "QB19"],
+    ["QB19", "QB20"],
+]
 computational_resonators = []
 
 # Define the REST Server App
@@ -337,75 +337,107 @@ async def get_v1_quantum_architecture(
         qubits=qubits,
         computational_resonators=computational_resonators,
         gates={
-            "cz": iqm_client.GateInfo(
-                implementations={
-                    "crf_crf": iqm_client.GateImplementationInfo(
-                        loci=(
-                            ("QB1", "QB2"),
-                            ("QB1", "QB4"),
-                            ("QB2", "QB5"),
-                            ("QB3", "QB4"),
-                            ("QB3", "QB8"),
-                            ("QB4", "QB5"),
-                            ("QB4", "QB9"),
-                            ("QB5", "QB6"),
-                            ("QB5", "QB10"),
-                            ("QB6", "QB7"),
-                            ("QB6", "QB11"),
-                            ("QB7", "QB12"),
-                            ("QB8", "QB9"),
-                            ("QB8", "QB13"),
-                            ("QB9", "QB10"),
-                            ("QB9", "QB14"),
-                            ("QB10", "QB11"),
-                            ("QB10", "QB15"),
-                            ("QB11", "QB12"),
-                            ("QB11", "QB16"),
-                            ("QB12", "QB17"),
-                            ("QB13", "QB14"),
-                            ("QB14", "QB15"),
-                            ("QB14", "QB18"),
-                            ("QB15", "QB16"),
-                            ("QB15", "QB19"),
-                            ("QB16", "QB17"),
-                            ("QB16", "QB20"),
-                            ("QB18", "QB19"),
-                            ("QB19", "QB20"),
-                        )),
-                },
-                default_implementation="crf_crf",
-                override_default_implementation={},
-            ),
-            "measure": iqm_client.GateInfo(
-                implementations={
-                    "constant": iqm_client.GateImplementationInfo(
-                        loci=(
-                            ("QB1",), ("QB2",), ("QB3",), ("QB4",),
-                            ("QB5",), ("QB6",), ("QB7",), ("QB8",),
-                            ("QB9",), ("QB10",), ("QB11",), ("QB12",),
-                            ("QB13",), ("QB14",), ("QB15",), ("QB16",),
-                            ("QB17",), ("QB18",), ("QB19",), ("QB20",),
-                        ))
-                },
-                default_implementation="constant",
-                override_default_implementation={},
-            ),
-            "prx": iqm_client.GateInfo(
-                implementations={
-                    "drag_crf": iqm_client.GateImplementationInfo(
-                        loci=(
-                            ("QB1",), ("QB2",), ("QB3",), ("QB4",),
-                            ("QB5",), ("QB6",), ("QB7",), ("QB8",),
-                            ("QB9",), ("QB10",), ("QB11",), ("QB12",),
-                            ("QB13",), ("QB14",), ("QB15",), ("QB16",),
-                            ("QB17",), ("QB18",), ("QB19",), ("QB20",),
-                        ))
-                },
-                default_implementation="drag_crf",
-                override_default_implementation={},
-            ),
-        }
-    )
+            "cz":
+                iqm_client.GateInfo(
+                    implementations={
+                        "crf_crf":
+                            iqm_client.GateImplementationInfo(loci=(
+                                ("QB1", "QB2"),
+                                ("QB1", "QB4"),
+                                ("QB2", "QB5"),
+                                ("QB3", "QB4"),
+                                ("QB3", "QB8"),
+                                ("QB4", "QB5"),
+                                ("QB4", "QB9"),
+                                ("QB5", "QB6"),
+                                ("QB5", "QB10"),
+                                ("QB6", "QB7"),
+                                ("QB6", "QB11"),
+                                ("QB7", "QB12"),
+                                ("QB8", "QB9"),
+                                ("QB8", "QB13"),
+                                ("QB9", "QB10"),
+                                ("QB9", "QB14"),
+                                ("QB10", "QB11"),
+                                ("QB10", "QB15"),
+                                ("QB11", "QB12"),
+                                ("QB11", "QB16"),
+                                ("QB12", "QB17"),
+                                ("QB13", "QB14"),
+                                ("QB14", "QB15"),
+                                ("QB14", "QB18"),
+                                ("QB15", "QB16"),
+                                ("QB15", "QB19"),
+                                ("QB16", "QB17"),
+                                ("QB16", "QB20"),
+                                ("QB18", "QB19"),
+                                ("QB19", "QB20"),
+                            )),
+                    },
+                    default_implementation="crf_crf",
+                    override_default_implementation={},
+                ),
+            "measure":
+                iqm_client.GateInfo(
+                    implementations={
+                        "constant":
+                            iqm_client.GateImplementationInfo(loci=(
+                                ("QB1",),
+                                ("QB2",),
+                                ("QB3",),
+                                ("QB4",),
+                                ("QB5",),
+                                ("QB6",),
+                                ("QB7",),
+                                ("QB8",),
+                                ("QB9",),
+                                ("QB10",),
+                                ("QB11",),
+                                ("QB12",),
+                                ("QB13",),
+                                ("QB14",),
+                                ("QB15",),
+                                ("QB16",),
+                                ("QB17",),
+                                ("QB18",),
+                                ("QB19",),
+                                ("QB20",),
+                            ))
+                    },
+                    default_implementation="constant",
+                    override_default_implementation={},
+                ),
+            "prx":
+                iqm_client.GateInfo(
+                    implementations={
+                        "drag_crf":
+                            iqm_client.GateImplementationInfo(loci=(
+                                ("QB1",),
+                                ("QB2",),
+                                ("QB3",),
+                                ("QB4",),
+                                ("QB5",),
+                                ("QB6",),
+                                ("QB7",),
+                                ("QB8",),
+                                ("QB9",),
+                                ("QB10",),
+                                ("QB11",),
+                                ("QB12",),
+                                ("QB13",),
+                                ("QB14",),
+                                ("QB15",),
+                                ("QB16",),
+                                ("QB17",),
+                                ("QB18",),
+                                ("QB19",),
+                                ("QB20",),
+                            ))
+                    },
+                    default_implementation="drag_crf",
+                    override_default_implementation={},
+                ),
+        })
 
 
 @app.post("/circuits")
