@@ -68,6 +68,11 @@ protected:
     nlohmann::json tokens;
     tokensFile >> tokens;
     tokensFile.close();
+
+    if (!tokens.count("access_token")) {
+      throw std::runtime_error("No 'access_token' found in tokens file: " +
+                               unwrappedTokensFilePath);
+    }
     return tokens["access_token"].get<std::string>();
   }
 

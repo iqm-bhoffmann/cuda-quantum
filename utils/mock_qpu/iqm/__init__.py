@@ -24,10 +24,9 @@ good_access_token = "Bearer good_access_token"
 server_qpu_architecture = "Apollo"
 operations = []  # TBA
 qubits = [
-    "QB1", "QB2", "QB3", "QB4", "QB5",
-    "QB6", "QB7", "QB8", "QB9", "QB10",
-    "QB11", "QB12", "QB13", "QB14", "QB15",
-    "QB16", "QB17", "QB18", "QB19", "QB20"
+    "QB1", "QB2", "QB3", "QB4", "QB5", "QB6", "QB7", "QB8", "QB9", "QB10",
+    "QB11", "QB12", "QB13", "QB14", "QB15", "QB16", "QB17", "QB18", "QB19",
+    "QB20"
 ]
 qubit_connectivity = [
     ["QB1", "QB2"],
@@ -139,13 +138,8 @@ def _make_cz_unitary_matrix() -> np.ndarray:
     return CZ
 
 
-def _extract_qubit_position_from_qubit_name(
-        qubit_name: str,
-        qubit_mapping: Optional[dict[str, str]]) -> int:
+def _extract_qubit_position_from_qubit_name(qubit_name: str) -> int:
     """Extract the qubit position from the qubit name."""
-    if qubit_mapping is not None:
-        if qubit_name in qubit_mapping:
-            qubit_name = qubit_mapping[qubit_name]
     return int(qubit_name[2:]) - 1
 
 
@@ -186,9 +180,16 @@ def _validate_measurements(job: Job, circuit: iqm_client.Circuit) -> bool:
     return True
 
 
-def _validate_connectivity(job: Job, circuit: iqm_client.Circuit,
-                           qubit_mapping: Optional[dict[str, str]]) -> bool:
+def _validate_connectivity(job: Job, circuit: iqm_client.Circuit) -> bool:
     """Check connectivity matches the qpu-architecture"""
+    request = job.metadata.request
+    qubit_mapping: Optional[dict[str, str]] = None
+
+    if (request.qubit_mapping is not None) and (request.qubit_mapping):
+        qubit_mapping = {}
+        for sqm in request.qubit_mapping:
+            qubit_mapping[sqm.logical_name] = sqm.physical_name
+
     for instruction in circuit.instructions:
         if len(instruction.qubits) == 2:
             qubit_pair = list(instruction.qubits)
@@ -205,8 +206,8 @@ def _validate_connectivity(job: Job, circuit: iqm_client.Circuit,
                 job.result = iqm_client.RunResult(
                     status=job.status,
                     metadata=job.metadata,
-                    message= "Some circuits in the batch have gates between"
-                             + " uncoupled qubits: " + "-".join(qubit_pair),
+                    message="Some circuits in the batch have gates between" +
+                    " uncoupled qubits: " + "-".join(qubit_pair),
                 )
                 createdJobs[job.id] = job
                 return False
@@ -214,30 +215,27 @@ def _validate_connectivity(job: Job, circuit: iqm_client.Circuit,
 
 
 def _gather_circuit_information(
-        instructions: list[iqm_client.Instruction],
-        qubit_mapping: Optional[dict[str, str]]) -> tuple[set[int], int]:
+    instructions: list[iqm_client.Instruction],) -> tuple[set[int], int]:
     """Gather qubits from the circuit"""
     measurement_qubits: set[int] = set()
     all_qubits: set[int] = set()
     for instruction in instructions:
         all_qubits.update(
-            _extract_qubit_position_from_qubit_name(qb, qubit_mapping)
+            _extract_qubit_position_from_qubit_name(qb)
             for qb in list(instruction.qubits))
         if instruction.name == "measure":
             measurement_qubits.update(
-                _extract_qubit_position_from_qubit_name(qb, qubit_mapping)
+                _extract_qubit_position_from_qubit_name(qb)
                 for qb in list(instruction.qubits))
     return measurement_qubits, len(all_qubits)
 
 
-def _simulate_circuit(
-        instructions: list[iqm_client.Instruction],
-        shots: int,
-        qubit_mapping: Optional[dict[str, str]]) -> dict[str, int]:
+def _simulate_circuit(instructions: list[iqm_client.Instruction],
+                      shots: int) -> dict[str, int]:
     """Simulate the circuit"""
     # extract qubits information from measurements
     measurement_qubits_positions, number_of_qubits = \
-        _gather_circuit_information(instructions, qubit_mapping)
+        _gather_circuit_information(instructions)
 
     # calculate circuit operator and measure qubits
     dims = [2] * number_of_qubits
@@ -248,7 +246,7 @@ def _simulate_circuit(
     for instruction in instructions:
         if instruction.name == "prx":
             qubit_position = _extract_qubit_position_from_qubit_name(
-                instruction.qubits[0], qubit_mapping)
+                instruction.qubits[0])
             r_gate = _make_phased_rx_unitary_matrix(
                 float(instruction.args["angle_t"]) * (2.0 * np.pi),
                 float(instruction.args["phase_t"]) * (2.0 * np.pi),
@@ -259,9 +257,9 @@ def _simulate_circuit(
                                         [2] * 1, number_of_qubits)
         elif instruction.name == "cz":
             control_qubit_position = _extract_qubit_position_from_qubit_name(
-                instruction.qubits[0], qubit_mapping)
+                instruction.qubits[0])
             target_qubit_position = _extract_qubit_position_from_qubit_name(
-                instruction.qubits[1], qubit_mapping)
+                instruction.qubits[1])
             cz_gate = _make_cz_unitary_matrix()
 
             # arity here is `number_of_qubits` because `operator` is an operation over all the qubits
@@ -301,24 +299,17 @@ async def compile_and_submit_job(job: Job):
     """Analyze measurements and construct corresponding counts"""
     request = job.metadata.request
     circuits = request.circuits
-    qubit_mapping_l2p: Optional[dict[str, str]] = None
-
-    if (request.qubit_mapping is not None) and (request.qubit_mapping):
-        qubit_mapping_l2p = {}
-        for sqm in request.qubit_mapping:
-            qubit_mapping_l2p[sqm.logical_name] = sqm.physical_name
 
     job.counts_batch = []
     for circuit in circuits:
         if not _validate_measurements(job, circuit):
             return
 
-        if not _validate_connectivity(job, circuit, qubit_mapping_l2p):
+        if not _validate_connectivity(job, circuit):
             return
 
         # Simulate the circuit
-        counts = _simulate_circuit(circuit.instructions, request.shots,
-                                   qubit_mapping_l2p)
+        counts = _simulate_circuit(circuit.instructions, request.shots)
 
         job.counts_batch.append(
             Counts(counts=counts, measurement_keys=[circuit.name]))
@@ -350,7 +341,7 @@ async def get_quantum_architecture(
 # excluded from the list of calibrated prx gates. This simulates a QPU
 # with an imperfect calibration.
 @app.get("/calibration-sets/default/dynamic-quantum-architecture")
-async def get_v1_quantum_architecture(
+async def get_dynamic_quantum_architecture(
         request: Request) -> iqm_client.DynamicQuantumArchitecture:
     """Get the dynamic quantum architecture"""
 
@@ -367,11 +358,8 @@ async def get_v1_quantum_architecture(
                 iqm_client.GateInfo(
                     implementations={
                         "crf_crf":
-                            iqm_client.GateImplementationInfo(loci=
-                                tuple(
-                                    tuple(pair) for pair in qubit_connectivity
-                                )
-                            ),
+                            iqm_client.GateImplementationInfo(loci=tuple(
+                                tuple(pair) for pair in qubit_connectivity)),
                     },
                     default_implementation="crf_crf",
                     override_default_implementation={},
@@ -380,11 +368,8 @@ async def get_v1_quantum_architecture(
                 iqm_client.GateInfo(
                     implementations={
                         "constant":
-                            iqm_client.GateImplementationInfo(loci=
-                                tuple(
-                                    (qubit,) for qubit in qubits
-                                )
-                            )
+                            iqm_client.GateImplementationInfo(loci=tuple(
+                                (qubit,) for qubit in qubits))
                     },
                     default_implementation="constant",
                     override_default_implementation={},
@@ -397,7 +382,8 @@ async def get_v1_quantum_architecture(
                                 ("QB1",),
                                 #("QB2",),
                                 #("QB3",),
-                                ("QB4",),
+                                (
+                                    "QB4",),
                                 ("QB5",),
                                 ("QB6",),
                                 ("QB7",),
