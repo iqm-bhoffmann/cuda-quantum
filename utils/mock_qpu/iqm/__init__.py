@@ -21,13 +21,13 @@ import numpy as np
 
 # Testing constants
 good_access_token = "Bearer good_access_token"
-server_qpu_architecture = "Crystal_20"
-operations = []  # TBA
+
 qubits = [
     "QB1", "QB2", "QB3", "QB4", "QB5", "QB6", "QB7", "QB8", "QB9", "QB10",
     "QB11", "QB12", "QB13", "QB14", "QB15", "QB16", "QB17", "QB18", "QB19",
     "QB20"
 ]
+
 qubit_connectivity = [
     ["QB1", "QB2"],
     ["QB1", "QB4"],
@@ -60,7 +60,10 @@ qubit_connectivity = [
     ["QB18", "QB19"],
     ["QB19", "QB20"],
 ]
+
 computational_resonators = []
+
+bad_qubits_prx = ["QB2", "QB3"]
 
 # Define the REST Server App
 app = FastAPI()
@@ -319,28 +322,10 @@ async def compile_and_submit_job(job: Job):
     createdJobs[job.id] = job
 
 
-@app.get("/quantum-architecture")
-async def get_quantum_architecture(
-        request: Request) -> iqm_client.QuantumArchitecture:
-    """Get the quantum architecture"""
-
-    access_token = request.headers.get("Authorization")
-    if access_token != good_access_token:
-        raise HTTPException(401)
-
-    return iqm_client.QuantumArchitecture(
-        quantum_architecture=iqm_client.QuantumArchitectureSpecification(
-            name=server_qpu_architecture,
-            operations=operations,
-            qubits=qubits,
-            qubit_connectivity=qubit_connectivity,
-        ))
-
-
 # Note: in this dynamic quantum architecture 2 qubits are deliberately
 # excluded from the list of calibrated `prx` gates. This simulates a QPU
 # with an imperfect calibration.
-@app.get("/calibration-sets/default/dynamic-quantum-architecture")
+@app.get("/api/v1/calibration-sets/{qc}/default/dynamic-quantum-architecture")
 async def get_dynamic_quantum_architecture(
         request: Request) -> iqm_client.DynamicQuantumArchitecture:
     """Get the dynamic quantum architecture"""
@@ -378,29 +363,10 @@ async def get_dynamic_quantum_architecture(
                 iqm_client.GateInfo(
                     implementations={
                         "drag_crf":
-                            iqm_client.GateImplementationInfo(loci=(
-                                ("QB1",),
-                                #("QB2",),
-                                #("QB3",),
-                                (
-                                    "QB4",),
-                                ("QB5",),
-                                ("QB6",),
-                                ("QB7",),
-                                ("QB8",),
-                                ("QB9",),
-                                ("QB10",),
-                                ("QB11",),
-                                ("QB12",),
-                                ("QB13",),
-                                ("QB14",),
-                                ("QB15",),
-                                ("QB16",),
-                                ("QB17",),
-                                ("QB18",),
-                                ("QB19",),
-                                ("QB20",),
-                            ))
+                            iqm_client.GateImplementationInfo(loci=tuple(
+                                (qubit,)
+                                for qubit in qubits
+                                if qubit not in bad_qubits_prx))
                     },
                     default_implementation="drag_crf",
                     override_default_implementation={},
@@ -408,9 +374,9 @@ async def get_dynamic_quantum_architecture(
         })
 
 
-@app.post("/circuits")
-async def post_jobs(job_request: iqm_client.RunRequest,
-                    request: Request) -> PostJobsResponse:
+@app.post("/api/v1/jobs/{qc}/circuit")
+async def post_job(job_request: iqm_client.RunRequest,
+                   request: Request) -> PostJobsResponse:
     """Register a new job and start execution"""
 
     access_token = request.headers.get("Authorization")
@@ -434,8 +400,8 @@ async def post_jobs(job_request: iqm_client.RunRequest,
     return PostJobsResponse(id=new_job_id)
 
 
-@app.get("/circuits/{job_id}/status")
-async def get_jobs_status(job_id: str, request: Request) -> iqm_client.Status:
+@app.get("/api/v1/jobs/{job_id}")
+async def get_job_status(job_id: str, request: Request):
     """Get the status of a job"""
 
     access_token = request.headers.get("Authorization")
@@ -445,11 +411,30 @@ async def get_jobs_status(job_id: str, request: Request) -> iqm_client.Status:
     if job_id not in createdJobs:
         raise HTTPException(404)
 
-    return createdJobs[job_id].status
+    job = createdJobs[job_id]
+
+    results = {
+        # Note: this is a subset of what a real server would return.
+        "messages": {
+            "message":
+                job.result.message
+                if job.result and job.result.message else None,
+            "source":
+                "iqm-server"
+        },
+        "queue_position":
+            1,
+        "runtime_ms":
+            None,
+        "status":
+            "completed" if job.status == iqm_client.Status.READY else job.status
+    }
+
+    return results
 
 
-@app.get("/circuits/{job_id}/counts")
-async def get_jobs(job_id: str, request: Request):
+@app.get("/api/v1/jobs/{job_id}/artifacts/measurement_counts")
+async def get_job_counts(job_id: str, request: Request):
     """Get the result of a job"""
     access_token = request.headers.get("Authorization")
     if access_token != good_access_token:
@@ -461,14 +446,7 @@ async def get_jobs(job_id: str, request: Request):
     job = createdJobs[job_id]
 
     # TODO: return the actual counts, check the requested measurements
-    results = {
-        "status":
-            job.status,
-        "message":
-            job.result.message if job.result and job.result.message else None,
-        "counts_batch":
-            job.counts_batch,
-    }
+    results = job.counts_batch
 
     return results
 
