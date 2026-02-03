@@ -165,6 +165,21 @@ void IQMServerHelper::initialize(BackendConfig config) {
 
   if (!iqmServerUrl.ends_with("/"))
     iqmServerUrl += "/";
+
+  // For backward compatibility rewrite old style URLs.
+  auto pos = iqmServerUrl.find("://cocos.");
+  if (pos != std::string::npos) {
+    iqmServerUrl.erase(pos+3, 6); // skip the anchor and erase "cocos."
+    pos = iqmServerUrl.find_first_of('/', pos+3); // start of the path
+    assert(pos != std::string::npos); // guaranteed by adding the slash above
+    auto end = iqmServerUrl.find_first_of('/', pos+1);
+    if (end != std::string::npos) {
+      // The old URL path starts with the QC name.
+      qcName = iqmServerUrl.substr(pos+1, end - pos -1);
+      iqmServerUrl.erase(pos, end - pos);
+    }
+  }
+
   CUDAQ_DBG("iqmServerUrl = {}", iqmServerUrl);
 
   // Allow selecting a quantum computer name independent from the URL.
