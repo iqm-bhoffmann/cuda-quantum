@@ -14,6 +14,7 @@
 #include "nlohmann/json.hpp"
 
 #include <fcntl.h>
+#include <iostream>
 #include <fstream>
 #include <regex>
 #include <stdlib.h>
@@ -96,6 +97,9 @@ protected:
 
   /// @brief Write the dynamic quantum architecture file
   std::string writeQuantumArchitectureFile(void);
+
+  /// @brief Read qubit mapping from quantum architecture file
+  void readQuantumArchitectureFile(std::string filepath);
 
   /// @brief Get server quantum architecture name
   std::string getQuantumArchitectureName() const {
@@ -353,12 +357,14 @@ void IQMServerHelper::updatePassPipeline(
   if (filename) {
     // Use provided string as path+filename
     pathToFile = std::string(filename);
+    readQuantumArchitectureFile(pathToFile);
   } else {
     // Allow setting of quantum architecture file via the backend config
     auto iter = backendConfig.find("mapping_file");
     if (iter != backendConfig.end()) {
       // Use provided string as path+filename
       pathToFile = iter->second;
+      readQuantumArchitectureFile(pathToFile);
     } else {
       // Use the dynamic quantum architecture of the configured IQM server
       fetchQuantumArchitecture();
@@ -418,6 +424,7 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     for (auto qubit : dynamicQuantumArchitecture["qubits"]) {
       qubitNameMap[qubit] = 0; // initializing to zero meaning no capability
     }
+    uint qubitCountStaticArch = qubitNameMap.size();
     for (auto cz : cz_loci) {
       // each cz loci has 2 qubits - mark each qubit
       for (auto qubit : cz) { // cz is an array of strings
@@ -470,6 +477,12 @@ void IQMServerHelper::fetchQuantumArchitecture() {
         qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
       }
     } // for all cz loci
+
+    // If no qubits were erased no mapping is needed. By clearing it here it
+    // will not be appended to the job.
+    if (qubitNameMap.size() == qubitCountStaticArch) {
+      qubitNameMap.clear();
+    }
   } catch (const std::exception &e) {
     throw std::runtime_error("Unable to get quantum architecture from \"" +
                              iqmServerUrl + "\": " + std::string(e.what()));
@@ -495,7 +508,7 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
 
   // open a file to write the dynamic quantum architecture to
   if (quantumArchitectureFilePath.empty()) {
-    // if no filename is given a temporary unique name is generated
+    // if no filename is given a temporary file with unique name is generated
     quantumArchitectureFilePath =
         std::string(P_tmpdir) + "/qpu-architecture-XXXXXX";
     fd = mkstemp(quantumArchitectureFilePath.data());
@@ -522,11 +535,13 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
   fprintf(file, "Number of nodes: %u\n", qubitCount);
   fprintf(file, "Number of edges: ?\n\n");
 
+  std::string outputLine;
+
   // Write one line for each qubit listing the adjacent qubits.
   for (uint i = 0; i < qubitCount; i++) {
     bool first = true;
 
-    std::string outputLine = std::to_string(i) + " --> {";
+    outputLine = std::to_string(i) + " --> {";
     for (uint node : qubitAdjacencyMap[i]) {
       if (first)
         first = false;
@@ -539,11 +554,69 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
     fwrite(outputLine.c_str(), outputLine.length(), 1, file);
   }
 
+  if (qubitNameMap.size() > 0) {
+    fprintf(file, "\n# Mapping to physical qubit tags for IQM backend\n");
+
+    outputLine = "# IQM qubit map:";
+    for (auto &[key, value] : qubitNameMap) {
+      outputLine += " \"" + key + "\"";
+    }
+
+    fwrite(outputLine.c_str(), outputLine.length(), 1, file);
+  }
+
   fclose(file);
   close(fd);
 
   return quantumArchitectureFilePath;
 } // IQMServerHelper::writeQuantumArchitectureFile()
+
+/**
+ * Read a qubit mapping list from a dynamic quantum architecture to file.
+ *
+ * Reads a qubit mapping list if such is included in the specified dynamic
+ * quantum architecture file. The qubit mapping list is an IQM specific
+ * extension of the quantum architecture file and located inside a comment.
+ * The qubit mapping list is a sequence of strings in which each string is
+ * enclosed in double quotes. It is loaded in order into the map used for
+ * translating logical qubit numbers into physical qubit tags.
+ *
+ * @return String containing the filename of the file to read.
+ * @throws std::runtime_error thrown when file cannot be opened for reading.
+ */
+void IQMServerHelper::readQuantumArchitectureFile(std::string filepath) {
+  std::fstream file(filepath);
+  std::string line;
+
+  if (!file.is_open()) {
+    throw std::runtime_error("Cannot read QPU architecture file: \"" +
+                             filepath + "\" - " +
+                             std::string(strerror(errno)));
+  }
+
+  while (std::getline(file, line)) {
+    if (line.starts_with("# IQM qubit map:")) {
+      CUDAQ_DBG("Loading qubit mapping from quantum architecture file");
+
+      uint idx = 0; // enumeration counter for logical qubits
+      size_t start = line.find_first_of(':'), end = start;
+
+      // Parse for tags enclosed in a pair of double quotes.
+      while (start != std::string::npos && end != std::string::npos) {
+        start = line.find_first_of('"', end+1);
+        if (start != std::string::npos){
+          end = line.find_first_of('"', start+1);
+          if (end != std::string::npos) {
+            qubitNameMap[line.substr(start + 1, end - start -1)] = idx++;
+          }
+        }
+      }
+      break; // Process only the first occurrence of a mapping line.
+    }
+  }
+
+  file.close();
+}
 
 } // namespace cudaq
 
