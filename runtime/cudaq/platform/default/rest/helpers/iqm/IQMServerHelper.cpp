@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
- * Copyright 2025 IQM Quantum Computers                                        *
+ * Copyright 2025-2026 IQM Quantum Computers                                   *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
@@ -213,16 +213,18 @@ IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   // so we cannot use the batch mode
   for (auto &circuitCode : circuitCodes) {
     ServerMessage message = ServerMessage::object();
-    message["qubit_mapping"] = ServerMessage::array();
     message["circuits"] = ServerMessage::array();
     message["shots"] = shots;
 
-    // Apply the mapping derived from the dynamic quantum architecture.
-    for (auto &[key, value] : qubitNameMap) {
-      nlohmann::json singleQubitMapping;
-      singleQubitMapping["logical_name"] = "QB" + std::to_string(value + 1);
-      singleQubitMapping["physical_name"] = key;
-      message["qubit_mapping"].push_back(singleQubitMapping);
+    if (qubitNameMap.size() > 0) {
+      // Apply the mapping derived from the dynamic quantum architecture.
+      message["qubit_mapping"] = ServerMessage::array();
+      for (auto &[key, value] : qubitNameMap) {
+        nlohmann::json singleQubitMapping;
+        singleQubitMapping["logical_name"] = "QB" + std::to_string(value + 1);
+        singleQubitMapping["physical_name"] = key;
+        message["qubit_mapping"].push_back(singleQubitMapping);
+      }
     }
 
     ServerMessage yac = nlohmann::json::parse(circuitCode.code);
