@@ -114,14 +114,14 @@ IQM
 .. _iqm-backend:
 
 `IQM Resonance <https://meetiqm.com/products/iqm-resonance/>`__ offers access to various different IQM quantum computers.
-The machines available there will be constantly extended as development progresses.
+The quantum computers available there will be constantly extended as development progresses.
 Programmers of CUDA-Q may use IQM Resonance with either C++ or Python.
 
 With this version it is no longer necessary to define the target QPU architecture in the code or at compile time.
 The IQM backend integration now contacts at runtime the configured IQM server and fetches the active dynamic quantum architecture of the QPU.
 This is then used as input to transpile the quantum kernel code just-in-time for the target QPU topology.
-By setting the environment variable ``IQM_SERVER_URL`` the target server can be selected just before executing the program.
-As result the python script or the compiled C++ program can be executed on different QPUs without recompilation or code changes.
+By setting the environment variables ``IQM_SERVER_URL`` and ``IQM_QC`` the target server and quantum computer can be chosen just before executing the program.
+As result the python script or the compiled C++ program can be executed on different QPUs without code changes or recompilation.
 
 Please find also more documentation after logging in to the IQM Resonance portal.
 
@@ -144,9 +144,10 @@ Submitting
 
     .. code:: python
 
-        cudaq.set_target("iqm", url="https://<IQM Server>/")
+        cudaq.set_target("iqm", url="https://resonance.meetiqm.com/", qc="garnet")
 
     Please note that setting the environment variable ``IQM_SERVER_URL`` takes precedence over the URL configured in the code.
+    The same applies to setting the environment variable ``IQM_QC`` which overwrites the qc (quantum computer) setting.
 
 
 .. tab:: C++
@@ -155,14 +156,14 @@ Submitting
 
     .. code:: bash
 
-        nvq++ --target iqm src.cpp
+        nvq++ --target iqm src.cpp -o program
 
-    Once the binary for an IQM QPU is compiled, it can be executed against any IQM Server by setting the environment variable ``IQM_SERVER_URL`` as shown here:
+    Once the binary for an IQM QPU is compiled, it can be executed against any IQM Server by setting the environment variables ``IQM_SERVER_URL`` and ``IQM_QC`` as shown here:
 
     .. code:: bash
 
         nvq++ --target iqm src.cpp -o program
-        IQM_SERVER_URL="https://demo.qc.iqm.fi/" ./program
+        IQM_SERVER_URL="https://resonance.meetiqm.com/" IQM_QC="garnet" ./program
 
 
 To see a complete example for using IQM server backends, take a look at :ref:`IQM examples <iqm-examples>`.

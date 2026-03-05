@@ -14,8 +14,8 @@
 #include "nlohmann/json.hpp"
 
 #include <fcntl.h>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <regex>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +45,9 @@ class IQMServerHelper : public ServerHelper {
 protected:
   /// @brief The base URL
   std::string iqmServerUrl = "http://localhost/";
+
+  /// @brief The "id" or "alias" (name) of the quantum computer
+  std::string iqmQC = "default";
 
   /// @brief Authorization token
   std::optional<std::string> authToken = std::nullopt;
@@ -101,22 +104,6 @@ protected:
   /// @brief Read qubit mapping from quantum architecture file
   void readQuantumArchitectureFile(std::string filepath);
 
-  /// @brief Get server quantum architecture name
-  std::string getQuantumArchitectureName() const {
-    RestClient client;
-    auto headers = generateRequestHeader();
-    auto quantumArchitecture =
-        client.get(iqmServerUrl, "quantum-architecture", headers);
-    try {
-      CUDAQ_DBG("quantumArchitecture = {}", quantumArchitecture.dump());
-      return quantumArchitecture["quantum_architecture"]["name"]
-          .get<std::string>();
-    } catch (const std::exception &e) {
-      throw std::runtime_error("Unable to get quantum architecture name: " +
-                               std::string(e.what()));
-    }
-  }
-
 public:
   /// @brief Return the name of this server helper, must be the
   /// same as the qpu config file.
@@ -167,14 +154,23 @@ public:
 void IQMServerHelper::initialize(BackendConfig config) {
   backendConfig = config;
 
-  // Set an alternate base URL if provided.
+  /* Configuration of URL and QC starts with default values. These can be
+     overwritten in a first round with settings from the backend string.
+     In a second round the values can be once more overwritten with settings
+     from environment variables. This second round allows changing the target
+     without recompilation or code changes. */
+
+  // First apply values from the backend string if given.
   auto iter = backendConfig.find("url");
   if (iter != backendConfig.end()) {
     iqmServerUrl = iter->second;
   }
+  iter = backendConfig.find("qc");
+  if (iter != backendConfig.end()) {
+    iqmQC = iter->second;
+  }
 
-  // Allow overriding IQM Server URL. This allows sending a program to any
-  // given URL without recompilation.
+  // Allow overriding IQM Server URL.
   auto envIqmServerUrl = getenv("IQM_SERVER_URL");
   if (envIqmServerUrl) {
     iqmServerUrl = std::string(envIqmServerUrl);
@@ -182,7 +178,29 @@ void IQMServerHelper::initialize(BackendConfig config) {
 
   if (!iqmServerUrl.ends_with("/"))
     iqmServerUrl += "/";
+
+  // For backward compatibility rewrite old style URLs.
+  auto pos = iqmServerUrl.find("://cocos.");
+  if (pos != std::string::npos) {
+    iqmServerUrl.erase(pos + 3, 6); // skip the anchor and erase "cocos."
+    pos = iqmServerUrl.find_first_of('/', pos + 3); // start of the path
+    assert(pos != std::string::npos); // guaranteed by adding the slash above
+    auto end = iqmServerUrl.find_first_of('/', pos + 1);
+    if (end != std::string::npos) {
+      // The old URL path starts with the QC alias.
+      iqmQC = iqmServerUrl.substr(pos + 1, end - pos - 1);
+      iqmServerUrl.erase(pos, end - pos);
+    }
+  }
+
+  // Allow overriding the quantum computer selection.
+  auto envIqmQc = getenv("IQM_QC");
+  if (envIqmQc) {
+    iqmQC = std::string(envIqmQc);
+  }
+
   CUDAQ_DBG("iqmServerUrl = {}", iqmServerUrl);
+  CUDAQ_DBG("iqmQc = {}", iqmQC);
 
   auto token = getenv("IQM_TOKEN");
   if (token) {
@@ -241,7 +259,8 @@ IQMServerHelper::createJob(std::vector<KernelExecution> &circuitCodes) {
   RestHeaders headers = generateRequestHeader();
 
   // return the payload
-  return std::make_tuple(iqmServerUrl + "circuits", headers, messages);
+  return std::make_tuple(iqmServerUrl + "api/v1/jobs/" + iqmQC + "/circuit",
+                         headers, messages);
 }
 
 std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
@@ -249,11 +268,11 @@ std::string IQMServerHelper::extractJobId(ServerMessage &postResponse) {
 }
 
 std::string IQMServerHelper::constructGetJobPath(ServerMessage &postResponse) {
-  return "circuits" + postResponse["id"].get<std::string>() + "/counts";
+  return "api/v1/jobs" + postResponse["id"].get<std::string>();
 }
 
 std::string IQMServerHelper::constructGetJobPath(std::string &jobId) {
-  return iqmServerUrl + "circuits/" + jobId + "/counts";
+  return iqmServerUrl + "api/v1/jobs/" + jobId;
 }
 
 std::chrono::microseconds
@@ -265,8 +284,8 @@ bool IQMServerHelper::jobIsDone(ServerMessage &getJobResponse) {
   CUDAQ_DBG("getJobResponse: {}", getJobResponse.dump());
 
   auto jobStatus = getJobResponse["status"].get<std::string>();
-  std::unordered_set<std::string> terminalStatuses = {"ready", "failed",
-                                                      "aborted"};
+  std::unordered_set<std::string> terminalStatuses = {"completed", "failed",
+                                                      "cancelled"};
   return terminalStatuses.find(jobStatus) != terminalStatuses.end();
 }
 
@@ -277,16 +296,29 @@ IQMServerHelper::processResults(ServerMessage &postJobResponse,
 
   // check if the job succeeded
   auto jobStatus = postJobResponse["status"].get<std::string>();
-  if (jobStatus != "ready") {
-    auto jobMessage = postJobResponse["message"].get<std::string>();
+  if (jobStatus != "completed") {
+    // Use only the first message (index 0) to report the error.
+    auto jobMessage =
+        postJobResponse["messages"][0]["message"].get<std::string>();
     throw std::runtime_error("Job status: " + jobStatus +
                              ", reason: " + jobMessage);
   }
 
-  auto counts_batch = postJobResponse["counts_batch"];
-  if (counts_batch.is_null()) {
-    throw std::runtime_error("No counts in the response");
+  ServerMessage counts_batch;
+  try {
+    RestClient client;
+    auto headers = generateRequestHeader();
+    counts_batch = client.get(
+        iqmServerUrl, "api/v1/jobs/" + jobID + "/artifacts/measurement_counts",
+        headers);
+    if (counts_batch.is_null()) {
+      throw std::runtime_error("No counts in the response");
+    }
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Unable to get counts for job " + jobID + ": " +
+                             std::string(e.what()));
   }
+  CUDAQ_INFO("Artifacts: {}", counts_batch.dump());
 
   // assume there is only one measurement and everything goes into the
   // GlobalRegisterName of `sample_results`
@@ -399,10 +431,12 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     // From the Dynamic Quantum Architecture we need the list of qubits names,
     // the list of qubit pairs which can form cz-gates, the lists of qubits
     // which can do prx-gates and the list of qubits which support measurement.
-    auto dynamicQuantumArchitecture = client.get(iqmServerUrl,
-                                                 "calibration-sets/default/"
-                                                 "dynamic-quantum-architecture",
-                                                 headers);
+    auto dynamicQuantumArchitecture =
+        client.get(iqmServerUrl,
+                   "api/v1/calibration-sets/" + iqmQC +
+                       "/default/dynamic-quantum-architecture",
+                   headers);
+
     CUDAQ_DBG("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
     auto &cz = dynamicQuantumArchitecture["gates"]["cz"];
@@ -453,7 +487,8 @@ void IQMServerHelper::fetchQuantumArchitecture() {
 
     // The number of qubits in this dynamic quantum architecture.
     uint qubitCount = qubitNameMap.size();
-    CUDAQ_INFO("Server {} has {} calibrated qubits", iqmServerUrl, qubitCount);
+    CUDAQ_INFO("Quantum computer \"{}\" at \"{}\" has {} calibrated qubits",
+               iqmQC, iqmServerUrl, qubitCount);
     assert(idx == qubitCount);
 
 #ifdef CUDAQ_DEBUG
@@ -484,8 +519,9 @@ void IQMServerHelper::fetchQuantumArchitecture() {
       qubitNameMap.clear();
     }
   } catch (const std::exception &e) {
-    throw std::runtime_error("Unable to get quantum architecture from \"" +
-                             iqmServerUrl + "\": " + std::string(e.what()));
+    throw std::runtime_error("Unable to get quantum architecture of \"" +
+                             iqmQC + "\" from \"" + iqmServerUrl +
+                             "\": " + std::string(e.what()));
   }
 } // IQMServerHelper::fetchQuantumArchitecture()
 
@@ -530,8 +566,10 @@ std::string IQMServerHelper::writeQuantumArchitectureFile(void) {
   }
 
   // Header
-  fprintf(file, "# NOTE: automatically generated for IQM server at URL: %s\n\n",
-          iqmServerUrl.c_str());
+  fprintf(file,
+          "# NOTE: automatically generated for quantum computer \"%s\" at "
+          "IQM server URL: %s\n\n",
+          iqmQC.c_str(), iqmServerUrl.c_str());
   fprintf(file, "Number of nodes: %u\n", qubitCount);
   fprintf(file, "Number of edges: ?\n\n");
 
@@ -590,8 +628,7 @@ void IQMServerHelper::readQuantumArchitectureFile(std::string filepath) {
 
   if (!file.is_open()) {
     throw std::runtime_error("Cannot read QPU architecture file: \"" +
-                             filepath + "\" - " +
-                             std::string(strerror(errno)));
+                             filepath + "\" - " + std::string(strerror(errno)));
   }
 
   while (std::getline(file, line)) {
@@ -603,11 +640,11 @@ void IQMServerHelper::readQuantumArchitectureFile(std::string filepath) {
 
       // Parse for tags enclosed in a pair of double quotes.
       while (start != std::string::npos && end != std::string::npos) {
-        start = line.find_first_of('"', end+1);
-        if (start != std::string::npos){
-          end = line.find_first_of('"', start+1);
+        start = line.find_first_of('"', end + 1);
+        if (start != std::string::npos) {
+          end = line.find_first_of('"', start + 1);
           if (end != std::string::npos) {
-            qubitNameMap[line.substr(start + 1, end - start -1)] = idx++;
+            qubitNameMap[line.substr(start + 1, end - start - 1)] = idx++;
           }
         }
       }
