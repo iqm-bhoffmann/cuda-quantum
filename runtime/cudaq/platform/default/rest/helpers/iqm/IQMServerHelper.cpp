@@ -42,6 +42,9 @@ class IQMServerHelper : public ServerHelper {
     }
   };
 
+  /// @brief Counter to limit the output of the status during polling
+  uint statusOutputRateLimit = 0;
+
 protected:
   /// @brief The base URL
   std::string iqmServerUrl = "http://localhost/";
@@ -277,13 +280,37 @@ std::string IQMServerHelper::constructGetJobPath(std::string &jobId) {
 
 std::chrono::microseconds
 IQMServerHelper::nextResultPollingInterval(ServerMessage &postResponse) {
-  return std::chrono::seconds(1); // jobs never take less than few seconds
+  uint delay = 1; // in seconds
+
+  if (postResponse.contains("queue_position")) {
+    uint pos = postResponse["queue_position"].get<uint>();
+    CUDAQ_INFO("Queue position: {}", pos);
+    while (pos > 3 && delay < 60) {
+      pos--;
+      delay += 5;
+    }
+  }
+
+  if (delay > 30) {
+    CUDAQ_INFO("Polling again in {} sec", delay);
+  }
+  return std::chrono::seconds(delay);
 };
 
 bool IQMServerHelper::jobIsDone(ServerMessage &getJobResponse) {
-  CUDAQ_DBG("getJobResponse: {}", getJobResponse.dump());
+  std::string jobStatus = getJobResponse["status"].get<std::string>();
 
-  auto jobStatus = getJobResponse["status"].get<std::string>();
+  if (jobStatus != "waiting") {
+    statusOutputRateLimit = 0;
+    CUDAQ_INFO("Job Status: {}", jobStatus);
+  } else {
+    if (statusOutputRateLimit == 0) {
+      statusOutputRateLimit = 10;
+      CUDAQ_INFO("Job Status: {}", jobStatus);
+    }
+    statusOutputRateLimit--;
+  }
+
   std::unordered_set<std::string> terminalStatuses = {"completed", "failed",
                                                       "cancelled"};
   return terminalStatuses.find(jobStatus) != terminalStatuses.end();
@@ -292,8 +319,6 @@ bool IQMServerHelper::jobIsDone(ServerMessage &getJobResponse) {
 cudaq::sample_result
 IQMServerHelper::processResults(ServerMessage &postJobResponse,
                                 std::string &jobID) {
-  CUDAQ_INFO("postJobResponse: {}", postJobResponse.dump());
-
   // check if the job succeeded
   auto jobStatus = postJobResponse["status"].get<std::string>();
   if (jobStatus != "completed") {
@@ -440,11 +465,9 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     CUDAQ_DBG("Dynamic QA={}", dynamicQuantumArchitecture.dump());
 
     auto &cz = dynamicQuantumArchitecture["gates"]["cz"];
-    auto implementation = cz["default_implementation"];
-    auto &cz_loci = cz["implementations"][implementation]["loci"];
 
     auto &prx = dynamicQuantumArchitecture["gates"]["prx"];
-    implementation = prx["default_implementation"];
+    auto implementation = prx["default_implementation"];
     auto prx_loci = prx["implementations"][implementation]["loci"];
 
     auto &measure = dynamicQuantumArchitecture["gates"]["measure"];
@@ -459,10 +482,13 @@ void IQMServerHelper::fetchQuantumArchitecture() {
       qubitNameMap[qubit] = 0; // initializing to zero meaning no capability
     }
     uint qubitCountStaticArch = qubitNameMap.size();
-    for (auto cz : cz_loci) {
-      // each cz loci has 2 qubits - mark each qubit
-      for (auto qubit : cz) { // cz is an array of strings
-        qubitNameMap[qubit] |= (1 << 0);
+    for (auto &cz_implementation : cz["implementations"]) {
+      auto &cz_loci = cz_implementation["loci"];
+      for (auto cz : cz_loci) {
+        // each cz loci has 2 qubits - mark each qubit
+        for (auto qubit : cz) { // cz is an array of strings
+          qubitNameMap[qubit] |= (1 << 0);
+        }
       }
     }
     for (auto prx : prx_loci) {
@@ -475,9 +501,14 @@ void IQMServerHelper::fetchQuantumArchitecture() {
     uint idx = 0; // enumeration counter
     for (auto qubit = qubitNameMap.begin(); qubit != qubitNameMap.end();) {
       if (qubit->second == ((1 << 0) | (1 << 1) | (1 << 2))) {
+        CUDAQ_DBG("mapping qubit: {} = {}", qubit->first, idx);
         qubit->second = idx++; // replace flags with enumeration value
         qubit++;
       } else {
+        CUDAQ_DBG("SKIPPING qubit {} which lacks {}{}{}", qubit->first,
+                  (qubit->second & (1 << 0) ? "" : "cz "),
+                  (qubit->second & (1 << 1) ? "" : "prx "),
+                  (qubit->second & (1 << 2) ? "" : "mx"));
         qubit = qubitNameMap.erase(qubit);
       }
     }
@@ -491,27 +522,25 @@ void IQMServerHelper::fetchQuantumArchitecture() {
                iqmQC, iqmServerUrl, qubitCount);
     assert(idx == qubitCount);
 
-#ifdef CUDAQ_DEBUG
-    for (auto &[key, value] : qubitNameMap) {
-      CUDAQ_DBG("qubit mapping: {} = {}", key, value);
-    }
-#endif
-
     // Initialise the adjacency map with an empty set for each qubit
+    qubitAdjacencyMap.clear();
     qubitAdjacencyMap.reserve(qubitCount);
     for (uint i = 0; i < qubitCount; i++) {
       qubitAdjacencyMap.emplace_back();
     }
 
-    // Iterate over all cz loci and add only those to the adjacency map
-    // for which all qubits have passed the above tests.
-    for (auto cz : cz_loci) {
-      if (qubitNameMap.count(cz[0]) && qubitNameMap.count(cz[1])) {
-        CUDAQ_DBG("usable cz_loci {}", cz.dump());
-        qubitAdjacencyMap[qubitNameMap[cz[0]]].insert(qubitNameMap[cz[1]]);
-        qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
-      }
-    } // for all cz loci
+    // Iterate over all cz loci of all implementations and add only those to
+    // the adjacency map for which all qubits have passed the above tests.
+    for (auto &cz_implementation : cz["implementations"]) {
+      auto &cz_loci = cz_implementation["loci"];
+      for (auto cz : cz_loci) {
+        if (qubitNameMap.count(cz[0]) && qubitNameMap.count(cz[1])) {
+          CUDAQ_DBG("usable cz_loci {}", cz.dump());
+          qubitAdjacencyMap[qubitNameMap[cz[0]]].insert(qubitNameMap[cz[1]]);
+          qubitAdjacencyMap[qubitNameMap[cz[1]]].insert(qubitNameMap[cz[0]]);
+        }
+      } // for all cz loci
+    }   // for all implementations
 
     // If no qubits were erased no mapping is needed. By clearing it here it
     // will not be appended to the job.
