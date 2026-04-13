@@ -8,6 +8,7 @@
 # ============================================================================ #
 
 import os
+import sys
 import shutil
 import tempfile
 from typing import List
@@ -19,11 +20,14 @@ import cudaq
 from cudaq import spin
 import pytest
 
+if "utils" not in sys.path:
+    sys.path.append("utils")
+
 iqm_client = pytest.importorskip("iqm.iqm_client")
 
 try:
-    from utils.mock_qpu.iqm import startServer
-    from utils.mock_qpu.iqm.mock_iqm_cortex_cli import write_a_mock_tokens_file
+    from start_mock_qpu import start_server
+    from mock_qpu.iqm.mock_iqm_cortex_cli import write_a_mock_tokens_file
 except:
     pytest.skip("Mock qpu not available, skipping IQM tests.",
                 allow_module_level=True)
@@ -43,7 +47,7 @@ def startUpMockServer():
         write_a_mock_tokens_file(tmp_tokens_file.name)
 
     # Launch the Mock Server
-    p = Process(target=startServer, args=(port,))
+    p = Process(target=start_server, args=("iqm",))
     p.start()
 
     if not check_server_connection(port):
