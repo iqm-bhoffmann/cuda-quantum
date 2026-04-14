@@ -288,6 +288,7 @@ namespaces
 natively
 normalization
 nullary
+nvq
 observables
 optimizer
 optimizers
@@ -308,6 +309,7 @@ probability
 programmatically
 pybind
 qaoa
+qc
 qed
 quantize
 quantized
@@ -375,6 +377,7 @@ unmarshal
 unmarshalling
 unoptimized
 upvote
+url
 variadic
 variational
 vazirani
